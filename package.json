@@ -48,10 +48,20 @@
     "files": [
       "dist/**/*",
       "assets/**/*",
-      "node_modules/@roamhq/wrtc/**/*"
+      "node_modules/@roamhq/wrtc/**/*",
+      "node_modules/@roamhq/wrtc-darwin-arm64/**/*",
+      "node_modules/@roamhq/wrtc-darwin-x64/**/*",
+      "node_modules/@roamhq/wrtc-linux-arm64/**/*",
+      "node_modules/@roamhq/wrtc-linux-x64/**/*",
+      "node_modules/@roamhq/wrtc-win32-x64/**/*"
     ],
     "asarUnpack": [
-      "node_modules/@roamhq/wrtc/**/*"
+      "node_modules/@roamhq/wrtc/**/*",
+      "node_modules/@roamhq/wrtc-darwin-arm64/**/*",
+      "node_modules/@roamhq/wrtc-darwin-x64/**/*",
+      "node_modules/@roamhq/wrtc-linux-arm64/**/*",
+      "node_modules/@roamhq/wrtc-linux-x64/**/*",
+      "node_modules/@roamhq/wrtc-win32-x64/**/*"
     ],
     "mac": {
       "category": "public.app-category.utilities",
