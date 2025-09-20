@@ -35,8 +35,8 @@ export interface SyncProgress {
 }
 
 export class FileService {
-  private readonly CHUNK_SIZE = 256 * 1024; // 256KB for WebRTC only
-  private readonly CHUNK_DELAY = 5; // Fast WebRTC timing
+  private readonly CHUNK_SIZE = 1024 * 1024; // 1MB for WebRTC - much faster
+  private readonly CHUNK_DELAY = 0; // No artificial delays for WebRTC
   private activeTransfers: Map<string, FileTransfer> = new Map();
   private destinationFolder: string = '';
   private p2pService: P2PService | null = null;
@@ -296,11 +296,6 @@ export class FileService {
         // Update overall progress
         this.updateSyncProgress();
         
-        // Add delay for large files to prevent overwhelming the connection
-        if (transfer.chunks.length > 10 && i < transfer.chunks.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, this.CHUNK_DELAY));
-        }
-        
         console.log(`Sent chunk ${i + 1}/${transfer.chunks.length} for ${transfer.fileName}`);
       }
       
@@ -329,23 +324,23 @@ export class FileService {
       if (useWebRTC) {
         console.log(`🚀 Using WebRTC for chunk ${chunk.index}`);
         
-        // Create combined message with metadata + data for WebRTC
-        const webrtcMessage = {
+        // Create efficient binary protocol: [header_length][header_json][chunk_data]
+        const header = {
           type: 'webrtc-file-chunk',
           fileId: chunk.fileId,
           chunkId: chunk.id,
           index: chunk.index,
           size: chunk.size,
           hash: chunk.hash,
-          totalChunks: this.activeTransfers.get(chunk.fileId)?.chunks.length || 1,
-          data: chunk.data
+          totalChunks: this.activeTransfers.get(chunk.fileId)?.chunks.length || 1
         };
         
-        // Serialize the message
-        const messageBuffer = Buffer.from(JSON.stringify({
-          ...webrtcMessage,
-          data: chunk.data.toString('base64') // Convert data for JSON
-        }));
+        const headerBuffer = Buffer.from(JSON.stringify(header), 'utf8');
+        const headerLengthBuffer = Buffer.allocUnsafe(4);
+        headerLengthBuffer.writeUInt32LE(headerBuffer.length, 0);
+        
+        // Combine: [4 bytes header length][header][chunk data]
+        const messageBuffer = Buffer.concat([headerLengthBuffer, headerBuffer, chunk.data]);
         
         const success = this.webrtcService!.sendData(targetDeviceId, messageBuffer);
         if (!success) {
@@ -536,16 +531,27 @@ export class FileService {
 
   private handleWebRTCData(peerId: string, data: Buffer): void {
     try {
-      // Parse WebRTC message
-      const message = JSON.parse(data.toString());
+      // Parse binary protocol: [4 bytes header length][header JSON][chunk data]
+      if (data.length < 4) {
+        console.error('Invalid WebRTC data: too short');
+        return;
+      }
+      
+      const headerLength = data.readUInt32LE(0);
+      if (data.length < 4 + headerLength) {
+        console.error('Invalid WebRTC data: header length mismatch');
+        return;
+      }
+      
+      const headerBuffer = data.subarray(4, 4 + headerLength);
+      const chunkData = data.subarray(4 + headerLength);
+      
+      const message = JSON.parse(headerBuffer.toString('utf8'));
       
       if (message.type === 'webrtc-file-chunk') {
         console.log(`📦 WebRTC chunk ${message.index} received from ${peerId}`);
         
-        // Convert base64 data back to buffer
-        const chunkData = Buffer.from(message.data, 'base64');
-        
-        // Process the chunk directly
+        // Process the chunk directly with binary data
         this.processCompleteChunk(peerId, message, chunkData);
       }
     } catch (error) {

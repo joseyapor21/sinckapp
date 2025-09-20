@@ -46,9 +46,11 @@ export class WebRTCService extends EventEmitter {
         ]
       });
 
-      // Create data channel for file transfer
+      // Create data channel for file transfer with optimized settings
       const dataChannel = connection.createDataChannel('fileTransfer', {
-        ordered: true
+        ordered: false, // Allow out-of-order delivery for speed
+        maxRetransmits: 0, // No retransmissions for speed
+        maxPacketLifeTime: 3000 // 3 second packet lifetime
       });
 
       const webrtcPeer: WebRTCPeer = {
