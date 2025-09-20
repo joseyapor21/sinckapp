@@ -47,7 +47,11 @@
     },
     "files": [
       "dist/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "node_modules/@roamhq/wrtc/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/@roamhq/wrtc/**/*"
     ],
     "mac": {
       "category": "public.app-category.utilities",
