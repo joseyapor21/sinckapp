@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { P2PService } from './p2p-service-simple';
 
 export interface FileChunk {
   id: string;
@@ -34,6 +35,8 @@ export interface SyncProgress {
 export class FileService {
   private readonly CHUNK_SIZE = 64 * 1024; // 64KB
   private activeTransfers: Map<string, FileTransfer> = new Map();
+  private destinationFolder: string = '';
+  private p2pService: P2PService | null = null;
   private syncProgress: SyncProgress = {
     totalFiles: 0,
     completedFiles: 0,
@@ -42,8 +45,75 @@ export class FileService {
     currentTransfers: []
   };
 
-  async initialize(): Promise<void> {
-    console.log('File service initialized');
+  async initialize(p2pService?: P2PService): Promise<void> {
+    const os = require('os');
+    this.destinationFolder = path.join(os.homedir(), 'Downloads', 'SinckApp');
+    this.p2pService = p2pService || null;
+    
+    if (this.p2pService) {
+      // Set up P2P event listeners for receiving files
+      this.p2pService.on('peer:message', (peerId: string, message: any) => {
+        this.handlePeerMessage(peerId, message);
+      });
+      
+      this.p2pService.on('peer:data', (peerId: string, data: Buffer) => {
+        this.handlePeerData(peerId, data);
+      });
+    }
+    
+    console.log('File service initialized with default destination:', this.destinationFolder);
+  }
+
+  setDestinationFolder(folder: string): void {
+    this.destinationFolder = folder;
+    console.log('Destination folder updated to:', this.destinationFolder);
+  }
+
+  getDestinationFolder(): string {
+    return this.destinationFolder;
+  }
+
+  async getReceivedFiles(): Promise<any[]> {
+    try {
+      if (!this.destinationFolder) {
+        console.warn('Destination folder not set');
+        return [];
+      }
+
+      // Ensure destination folder exists
+      await fs.mkdir(this.destinationFolder, { recursive: true });
+      
+      const files = await fs.readdir(this.destinationFolder);
+      const fileDetails = [];
+
+      for (const fileName of files) {
+        try {
+          const filePath = path.join(this.destinationFolder, fileName);
+          const stat = await fs.stat(filePath);
+          
+          if (stat.isFile()) {
+            fileDetails.push({
+              name: fileName,
+              path: filePath,
+              size: stat.size,
+              modified: stat.mtime,
+              type: path.extname(fileName) || 'file'
+            });
+          }
+        } catch (error) {
+          // Skip files that can't be read
+          console.warn('Could not read file stats for:', fileName);
+        }
+      }
+
+      // Sort by modification date (newest first)
+      fileDetails.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+      
+      return fileDetails;
+    } catch (error) {
+      console.error('Failed to read received files:', error);
+      return [];
+    }
   }
 
   async startSync(targetDeviceId: string, filePaths: string[]): Promise<string> {
@@ -123,6 +193,24 @@ export class FileService {
     transfer.status = 'transferring';
     
     try {
+      // Send file start message first
+      if (this.p2pService) {
+        const fileStartMessage = {
+          type: 'file-start',
+          fileId: transfer.id,
+          fileName: transfer.fileName,
+          fileSize: transfer.fileSize,
+          totalChunks: transfer.chunks.length
+        };
+        
+        const messageSent = this.p2pService.sendMessage(transfer.targetDeviceId, fileStartMessage);
+        if (!messageSent) {
+          throw new Error('Failed to send file start message');
+        }
+        
+        console.log(`Sent file start message for ${transfer.fileName} to ${transfer.targetDeviceId}`);
+      }
+
       // Read and process chunks
       const fileHandle = await fs.open(transfer.filePath, 'r');
       
@@ -159,14 +247,39 @@ export class FileService {
   }
 
   private async sendChunk(targetDeviceId: string, chunk: FileChunk): Promise<void> {
-    // This would integrate with the P2P service to send chunks
-    // For now, just simulate the transfer
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        console.log(`Sent chunk ${chunk.index} of file ${chunk.fileId} to ${targetDeviceId}`);
-        resolve();
-      }, 100); // Simulate network delay
-    });
+    if (!this.p2pService) {
+      console.error('P2P service not available for file transfer');
+      throw new Error('P2P service not initialized');
+    }
+
+    try {
+      // Send chunk metadata first
+      const chunkMessage = {
+        type: 'file-chunk',
+        fileId: chunk.fileId,
+        chunkId: chunk.id,
+        index: chunk.index,
+        size: chunk.size,
+        hash: chunk.hash,
+        totalChunks: this.activeTransfers.get(chunk.fileId)?.chunks.length || 1
+      };
+
+      const messageSent = this.p2pService.sendMessage(targetDeviceId, chunkMessage);
+      if (!messageSent) {
+        throw new Error('Failed to send chunk metadata');
+      }
+
+      // Send chunk data
+      const dataSent = this.p2pService.sendData(targetDeviceId, chunk.data);
+      if (!dataSent) {
+        throw new Error('Failed to send chunk data');
+      }
+
+      console.log(`Sent chunk ${chunk.index} of file ${chunk.fileId} to ${targetDeviceId}`);
+    } catch (error) {
+      console.error('Failed to send chunk:', error);
+      throw error;
+    }
   }
 
   private updateSyncProgress(): void {
@@ -180,6 +293,13 @@ export class FileService {
     
     this.syncProgress.transferredBytes = transferredBytes;
     this.syncProgress.currentTransfers = Array.from(this.activeTransfers.values());
+    
+    // Log progress for debugging
+    console.log('Sync progress updated:', {
+      completed: this.syncProgress.completedFiles,
+      total: this.syncProgress.totalFiles,
+      transferredMB: Math.round(transferredBytes / 1024 / 1024)
+    });
   }
 
   getSyncProgress(): SyncProgress {
@@ -211,28 +331,190 @@ export class FileService {
     }
   }
 
-  async assembleFile(fileId: string, fileName: string, totalChunks: number, outputPath: string): Promise<boolean> {
+  async assembleFile(fileId: string, fileName: string, totalChunks: number, outputPath?: string): Promise<boolean> {
     try {
       const tempDir = path.join(process.cwd(), 'temp', fileId);
-      const outputFile = await fs.open(path.join(outputPath, fileName), 'w');
+      const finalOutputPath = outputPath || this.destinationFolder;
       
+      console.log(`Assembling file: ${fileName} from ${totalChunks} chunks`);
+      console.log(`Temp directory: ${tempDir}`);
+      console.log(`Output path: ${finalOutputPath}`);
+      
+      // Check if temp directory exists
+      try {
+        await fs.access(tempDir);
+      } catch (error) {
+        console.error(`Temp directory does not exist: ${tempDir}`);
+        return false;
+      }
+      
+      // Verify all chunks exist
+      for (let i = 0; i < totalChunks; i++) {
+        const chunkPath = path.join(tempDir, `chunk-${i}`);
+        try {
+          await fs.access(chunkPath);
+          const stats = await fs.stat(chunkPath);
+          console.log(`Chunk ${i}: ${stats.size} bytes`);
+        } catch (error) {
+          console.error(`Missing chunk ${i} at ${chunkPath}`);
+          return false;
+        }
+      }
+      
+      // Ensure destination directory exists
+      await fs.mkdir(finalOutputPath, { recursive: true });
+      console.log(`Created destination directory: ${finalOutputPath}`);
+      
+      const outputFilePath = path.join(finalOutputPath, fileName);
+      const outputFile = await fs.open(outputFilePath, 'w');
+      
+      let totalBytesWritten = 0;
       for (let i = 0; i < totalChunks; i++) {
         const chunkPath = path.join(tempDir, `chunk-${i}`);
         const chunkData = await fs.readFile(chunkPath);
         await outputFile.write(chunkData);
+        totalBytesWritten += chunkData.length;
+        console.log(`Wrote chunk ${i}: ${chunkData.length} bytes`);
       }
       
       await outputFile.close();
       
-      // Clean up temporary files
-      await fs.rm(tempDir, { recursive: true });
+      // Verify the assembled file
+      const assembledStats = await fs.stat(outputFilePath);
+      console.log(`File assembled successfully: ${fileName}`);
+      console.log(`Total size: ${assembledStats.size} bytes (${totalBytesWritten} bytes written)`);
+      console.log(`Saved to: ${outputFilePath}`);
       
-      console.log(`File assembled: ${fileName}`);
+      // Clean up temporary files
+      try {
+        await fs.rm(tempDir, { recursive: true });
+        console.log(`Cleaned up temp directory: ${tempDir}`);
+      } catch (error) {
+        console.warn(`Failed to clean up temp directory: ${error}`);
+      }
+      
       return true;
       
     } catch (error) {
       console.error('Failed to assemble file:', error);
       return false;
+    }
+  }
+
+  private handlePeerMessage(peerId: string, message: any): void {
+    switch (message.type) {
+      case 'file-chunk':
+        this.handleIncomingChunkMessage(peerId, message);
+        break;
+      case 'file-start':
+        this.handleFileTransferStart(peerId, message);
+        break;
+      default:
+        console.log('Unknown message type:', message.type);
+    }
+  }
+
+  private handlePeerData(peerId: string, data: Buffer): void {
+    // This will be called when chunk data is received
+    this.handleIncomingChunkData(peerId, data);
+  }
+
+  private receivingFiles: Map<string, any> = new Map(); // Track incoming file transfers
+
+  private handleFileTransferStart(peerId: string, message: any): void {
+    console.log(`Starting to receive file: ${message.fileName} from ${peerId}`);
+    
+    this.receivingFiles.set(message.fileId, {
+      fileId: message.fileId,
+      fileName: message.fileName,
+      fileSize: message.fileSize,
+      totalChunks: message.totalChunks,
+      receivedChunks: new Map(),
+      fromPeer: peerId
+    });
+  }
+
+  private pendingChunks: Map<string, { message: any, data?: Buffer }> = new Map();
+
+  private handleIncomingChunkMessage(peerId: string, message: any): void {
+    console.log(`Receiving chunk ${message.index} metadata for file ${message.fileId}`);
+    
+    const chunkKey = `${message.fileId}-${message.index}`;
+    const existing = this.pendingChunks.get(chunkKey) || { message: undefined, data: undefined };
+    
+    existing.message = message;
+    this.pendingChunks.set(chunkKey, existing);
+    
+    // If we already have the data, process immediately
+    if (existing.data) {
+      this.processCompleteChunk(peerId, message, existing.data);
+      this.pendingChunks.delete(chunkKey);
+    }
+  }
+
+  private handleIncomingChunkData(peerId: string, data: Buffer): void {
+    console.log(`Received chunk data: ${data.length} bytes`);
+    
+    // Find the most recent pending chunk that doesn't have data yet
+    for (const [chunkKey, chunk] of this.pendingChunks.entries()) {
+      if (chunk.message && !chunk.data) {
+        chunk.data = data;
+        this.processCompleteChunk(peerId, chunk.message, data);
+        this.pendingChunks.delete(chunkKey);
+        return;
+      }
+    }
+    
+    console.warn('Received chunk data but no pending chunk metadata found');
+  }
+
+  private async processCompleteChunk(peerId: string, chunkMessage: any, chunkData: Buffer): Promise<void> {
+    try {
+      // Verify chunk hash
+      const calculatedHash = crypto.createHash('sha256').update(chunkData).digest('hex');
+      if (calculatedHash !== chunkMessage.hash) {
+        console.error('Chunk hash mismatch for chunk', chunkMessage.index);
+        return;
+      }
+
+      console.log(`Successfully received chunk ${chunkMessage.index} for file ${chunkMessage.fileId}`);
+
+      // Save chunk to temporary location
+      const tempDir = path.join(process.cwd(), 'temp', chunkMessage.fileId);
+      await fs.mkdir(tempDir, { recursive: true });
+      
+      const chunkPath = path.join(tempDir, `chunk-${chunkMessage.index}`);
+      await fs.writeFile(chunkPath, chunkData);
+
+      // Track received chunks
+      let fileTransfer = this.receivingFiles.get(chunkMessage.fileId);
+      if (!fileTransfer) {
+        // Create a temporary file transfer record
+        fileTransfer = {
+          fileId: chunkMessage.fileId,
+          fileName: `received-file-${chunkMessage.fileId}`,
+          totalChunks: chunkMessage.totalChunks,
+          receivedChunks: new Map(),
+          fromPeer: peerId
+        };
+        this.receivingFiles.set(chunkMessage.fileId, fileTransfer);
+      }
+
+      fileTransfer.receivedChunks.set(chunkMessage.index, true);
+
+      // Check if all chunks received
+      if (fileTransfer.receivedChunks.size === chunkMessage.totalChunks) {
+        console.log(`All chunks received for file ${chunkMessage.fileId}, assembling...`);
+        await this.assembleFile(
+          chunkMessage.fileId, 
+          fileTransfer.fileName, 
+          chunkMessage.totalChunks
+        );
+        this.receivingFiles.delete(chunkMessage.fileId);
+      }
+
+    } catch (error) {
+      console.error('Failed to process chunk:', error);
     }
   }
 }

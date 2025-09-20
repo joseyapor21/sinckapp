@@ -2,6 +2,8 @@ class SinckAppRenderer {
   private selectedFiles: string[] = [];
   private selectedDevice: string | null = null;
   private connectedDevices: any[] = [];
+  private destinationFolder: string = '';
+  private receivedFiles: any[] = [];
 
   constructor() {
     this.initializeApp();
@@ -12,6 +14,8 @@ class SinckAppRenderer {
   private async initializeApp(): Promise<void> {
     await this.loadDeviceInfo();
     await this.loadConnectedDevices();
+    await this.loadDefaultDestination();
+    await this.loadReceivedFiles();
     this.updateUI();
   }
 
@@ -33,6 +37,20 @@ class SinckAppRenderer {
     // Sync button
     document.getElementById('start-sync-btn')?.addEventListener('click', () => {
       this.startSync();
+    });
+
+    // Destination folder button
+    document.getElementById('select-destination-btn')?.addEventListener('click', () => {
+      this.selectDestinationFolder();
+    });
+
+    // Received files buttons
+    document.getElementById('refresh-received-btn')?.addEventListener('click', () => {
+      this.loadReceivedFiles();
+    });
+
+    document.getElementById('open-folder-btn')?.addEventListener('click', () => {
+      this.openDestinationFolder();
     });
   }
 
@@ -100,6 +118,121 @@ class SinckAppRenderer {
       }
     } catch (error) {
       console.error('Failed to select folder:', error);
+    }
+  }
+
+  private async loadDefaultDestination(): Promise<void> {
+    try {
+      this.destinationFolder = await window.electronAPI.getDownloadsFolder();
+      this.updateDestinationDisplay();
+    } catch (error) {
+      console.error('Failed to load default destination:', error);
+    }
+  }
+
+  private async selectDestinationFolder(): Promise<void> {
+    try {
+      const folderPath = await window.electronAPI.selectDestinationFolder();
+      if (folderPath) {
+        this.destinationFolder = folderPath;
+        this.updateDestinationDisplay();
+        // Update the file service with the new destination
+        await window.electronAPI.setDestinationFolder(folderPath);
+      }
+    } catch (error) {
+      console.error('Failed to select destination folder:', error);
+    }
+  }
+
+  private updateDestinationDisplay(): void {
+    const destinationInput = document.getElementById('destination-path') as HTMLInputElement;
+    if (destinationInput && this.destinationFolder) {
+      destinationInput.value = this.destinationFolder;
+      destinationInput.placeholder = this.destinationFolder;
+    }
+  }
+
+  private async loadReceivedFiles(): Promise<void> {
+    try {
+      // Add a small delay to ensure services are initialized
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      this.receivedFiles = await window.electronAPI.getReceivedFiles();
+      this.renderReceivedFiles();
+    } catch (error) {
+      console.error('Failed to load received files:', error);
+    }
+  }
+
+  private async openDestinationFolder(): Promise<void> {
+    try {
+      const success = await window.electronAPI.openDestinationFolder();
+      if (!success) {
+        console.error('Failed to open destination folder');
+      }
+    } catch (error) {
+      console.error('Failed to open destination folder:', error);
+    }
+  }
+
+  private renderReceivedFiles(): void {
+    const receivedFilesList = document.getElementById('received-files')!;
+    const template = document.getElementById('file-item-template') as HTMLTemplateElement;
+
+    if (this.receivedFiles.length === 0) {
+      receivedFilesList.innerHTML = `
+        <div class="empty-state">
+          <p>No received files</p>
+          <p class="hint">Files you receive will appear here</p>
+        </div>
+      `;
+      return;
+    }
+
+    receivedFilesList.innerHTML = '';
+
+    this.receivedFiles.forEach((file) => {
+      const clone = template.content.cloneNode(true) as DocumentFragment;
+      const fileItem = clone.querySelector('.file-item')!;
+      const fileName = clone.querySelector('.file-name')!;
+      const filePathElement = clone.querySelector('.file-path')!;
+      const removeBtn = clone.querySelector('.btn-danger')!;
+
+      fileName.textContent = file.name;
+      
+      // Show file size and modification date instead of full path
+      const fileSize = this.formatFileSize(file.size);
+      const modifiedDate = new Date(file.modified).toLocaleString();
+      filePathElement.textContent = `${fileSize} • Modified: ${modifiedDate}`;
+
+      // Change remove button to "Open" button for received files
+      removeBtn.textContent = 'Open';
+      removeBtn.classList.remove('btn-danger');
+      removeBtn.classList.add('btn-secondary');
+
+      removeBtn.addEventListener('click', () => {
+        this.openReceivedFile(file.path);
+      });
+
+      receivedFilesList.appendChild(clone);
+    });
+  }
+
+  private formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  private async openReceivedFile(filePath: string): Promise<void> {
+    try {
+      const success = await window.electronAPI.openFile(filePath);
+      if (!success) {
+        console.error('Failed to open file');
+      }
+    } catch (error) {
+      console.error('Failed to open file:', error);
     }
   }
 
@@ -319,6 +452,9 @@ class SinckAppRenderer {
       </div>
     `;
 
+    // Refresh received files in case we received new files
+    this.loadReceivedFiles();
+
     // Reset after a delay
     setTimeout(() => {
       this.selectedFiles = [];
@@ -356,6 +492,7 @@ class SinckAppRenderer {
   private updateUI(): void {
     this.renderFileList();
     this.renderDeviceList();
+    this.renderReceivedFiles();
     this.updateSyncButton();
   }
 }

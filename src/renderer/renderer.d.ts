@@ -2,6 +2,8 @@ declare class SinckAppRenderer {
     private selectedFiles;
     private selectedDevice;
     private connectedDevices;
+    private destinationFolder;
+    private receivedFiles;
     constructor();
     private initializeApp;
     private setupEventListeners;
@@ -10,6 +12,14 @@ declare class SinckAppRenderer {
     private loadConnectedDevices;
     private selectFiles;
     private selectFolder;
+    private loadDefaultDestination;
+    private selectDestinationFolder;
+    private updateDestinationDisplay;
+    private loadReceivedFiles;
+    private openDestinationFolder;
+    private renderReceivedFiles;
+    private formatFileSize;
+    private openReceivedFile;
     private renderFileList;
     private renderDeviceList;
     private removeFile;

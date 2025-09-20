@@ -73,6 +73,10 @@ body {
     flex: 1;
 }
 
+.received-panel {
+    flex: 1;
+}
+
 .devices-panel {
     flex: 0 0 300px;
     border-right: none;
@@ -258,9 +262,45 @@ body {
 
 .sync-controls {
     display: flex;
-    justify-content: center;
+    justify-content: space-between;
     align-items: center;
     gap: 1rem;
+}
+
+.destination-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    flex: 1;
+    max-width: 400px;
+}
+
+.destination-controls label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #2c3e50;
+}
+
+.destination-selector {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.destination-selector input {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    background: #f9f9f9;
+    font-size: 0.875rem;
+    color: #666;
+}
+
+.sync-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
 }
 
 .sync-status {

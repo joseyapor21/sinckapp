@@ -13,8 +13,7 @@ export const defaultNetworkConfig: NetworkConfig = {
   // Public signal servers for cross-network discovery
   signalServers: [
     'ws://localhost:8080', // Local network
-    // Add your deployed signal server here
-    // 'wss://your-signal-server.com:443'
+    'wss://sinckapp-production.up.railway.app' // Your Railway server
   ],
   
   // Fallback public signal servers
@@ -44,8 +43,7 @@ export const networkConfigs = {
     ...defaultNetworkConfig,
     signalServers: [
       'ws://localhost:8080', // Local network
-      // Add your production signal server here
-      // 'wss://sinckapp-signal.your-domain.com:443'
+      'wss://sinckapp-production.up.railway.app' // Your Railway server
     ]
   }
 };

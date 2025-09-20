@@ -1,3 +1,4 @@
+import { P2PService } from './p2p-service-simple';
 export interface FileChunk {
     id: string;
     fileId: string;
@@ -27,8 +28,13 @@ export interface SyncProgress {
 export declare class FileService {
     private readonly CHUNK_SIZE;
     private activeTransfers;
+    private destinationFolder;
+    private p2pService;
     private syncProgress;
-    initialize(): Promise<void>;
+    initialize(p2pService?: P2PService): Promise<void>;
+    setDestinationFolder(folder: string): void;
+    getDestinationFolder(): string;
+    getReceivedFiles(): Promise<any[]>;
     startSync(targetDeviceId: string, filePaths: string[]): Promise<string>;
     private prepareFileTransfer;
     private startFileTransfer;
@@ -36,6 +42,14 @@ export declare class FileService {
     private updateSyncProgress;
     getSyncProgress(): SyncProgress;
     receiveChunk(chunk: FileChunk, sourceDeviceId: string): Promise<boolean>;
-    assembleFile(fileId: string, fileName: string, totalChunks: number, outputPath: string): Promise<boolean>;
+    assembleFile(fileId: string, fileName: string, totalChunks: number, outputPath?: string): Promise<boolean>;
+    private handlePeerMessage;
+    private handlePeerData;
+    private receivingFiles;
+    private handleFileTransferStart;
+    private pendingChunks;
+    private handleIncomingChunkMessage;
+    private handleIncomingChunkData;
+    private processCompleteChunk;
 }
 //# sourceMappingURL=file-service.d.ts.map

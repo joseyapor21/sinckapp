@@ -1,5 +1,4 @@
 import WebSocket from 'ws';
-import SimplePeer from 'simple-peer';
 import { EventEmitter } from 'events';
 
 export interface ConnectedPeer {
@@ -7,26 +6,37 @@ export interface ConnectedPeer {
   name: string;
   isOnline: boolean;
   lastSeen: Date;
-  peer?: SimplePeer.Instance;
 }
 
 export class P2PService extends EventEmitter {
   private peers: Map<string, ConnectedPeer> = new Map();
   private wsServer: WebSocket.Server | null = null;
+  private ws: WebSocket | null = null;
   private deviceId: string = '';
+  private deviceName: string = '';
   private isSignalingServer: boolean = false;
 
-  async initialize(deviceId: string): Promise<void> {
+  async initialize(deviceId: string, deviceName?: string): Promise<void> {
     this.deviceId = deviceId;
+    this.deviceName = deviceName || `Device-${deviceId.substring(0, 8)}`;
     
     try {
-      // Start as signaling server
-      await this.startSignalingServer();
-      console.log('P2P service initialized as signaling server');
+      // Try to connect to Railway server first
+      console.log('Connecting to Railway signal server...');
+      await this.connectToSignalingServer('wss://sinckapp-production.up.railway.app');
+      console.log('Connected to Railway signal server');
     } catch (error) {
-      // If can't start server, connect to existing one
-      console.log('Starting as P2P client');
-      await this.connectToSignalingServer();
+      console.log('Failed to connect to Railway server, trying local network...');
+      try {
+        // Try local signaling server
+        await this.connectToSignalingServer('ws://localhost:8080');
+        console.log('Connected to local signal server');
+      } catch (localError) {
+        // If can't connect anywhere, start our own local server
+        console.log('Starting local signaling server...');
+        await this.startSignalingServer();
+        console.log('P2P service initialized as local signaling server');
+      }
     }
   }
 
@@ -38,214 +48,200 @@ export class P2PService extends EventEmitter {
         resolve();
       });
 
-      this.wsServer.on('error', (error) => {
-        reject(error);
+      this.wsServer.on('connection', (ws) => {
+        console.log('New client connected to signaling server');
+        
+        ws.on('message', (data) => {
+          try {
+            const message = JSON.parse(data.toString());
+            this.handleSignalingMessage(message, ws);
+            
+            // Forward messages to other clients
+            this.wsServer!.clients.forEach((client) => {
+              if (client !== ws && client.readyState === WebSocket.OPEN) {
+                client.send(data.toString());
+              }
+            });
+          } catch (error) {
+            console.error('Failed to parse message from client:', error);
+          }
+        });
+
+        ws.on('close', () => {
+          console.log('Client disconnected from signaling server');
+        });
       });
 
-      this.wsServer.on('connection', (ws) => {
-        this.handleSignalingConnection(ws);
+      this.wsServer.on('error', (error) => {
+        console.error('Signaling server error:', error);
+        reject(error);
       });
     });
   }
 
-  private async connectToSignalingServer(): Promise<void> {
+  private async connectToSignalingServer(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket('ws://localhost:8080');
+      this.ws = new WebSocket(url);
 
-      ws.on('open', () => {
+      this.ws.on('open', () => {
         console.log('Connected to signaling server');
-        this.handleSignalingConnection(ws);
+        this.sendIntroduction();
+        this.startPeriodicAnnouncements();
         resolve();
       });
 
-      ws.on('error', (error) => {
+      this.ws.on('message', (data) => {
+        try {
+          const message = JSON.parse(data.toString());
+          console.log('Received from Railway server:', message);
+          this.handleSignalingMessage(message, this.ws!);
+        } catch (error) {
+          console.error('Failed to parse signaling message:', error);
+        }
+      });
+
+      this.ws.on('close', () => {
+        console.log('Disconnected from signaling server');
+        this.ws = null;
+      });
+
+      this.ws.on('error', (error) => {
+        console.error('Signaling server connection error:', error);
         reject(error);
       });
     });
   }
 
-  private handleSignalingConnection(ws: WebSocket): void {
-    ws.on('message', (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        this.handleSignalingMessage(message, ws);
-      } catch (error) {
-        console.error('Failed to parse signaling message:', error);
-      }
-    });
+  private sendIntroduction(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    ws.on('close', () => {
-      console.log('Signaling connection closed');
-    });
-
-    // Send introduction message
+    // Send introduction message compatible with Railway server
     const introMessage = {
-      type: 'introduce',
+      type: 'peer-announce',
       deviceId: this.deviceId,
-      deviceName: `Device-${this.deviceId.substring(0, 8)}`
+      deviceName: this.deviceName,
+      ip: 'unknown',
+      port: 8080,
+      timestamp: Date.now()
     };
-    ws.send(JSON.stringify(introMessage));
+
+    console.log('Sending introduction to Railway server:', introMessage);
+    this.ws.send(JSON.stringify(introMessage));
   }
 
   private handleSignalingMessage(message: any, ws: WebSocket): void {
     switch (message.type) {
       case 'introduce':
+      case 'peer-announce':
         this.handlePeerIntroduction(message, ws);
         break;
-      case 'offer':
-        this.handleOffer(message);
+      case 'peer-list':
+        this.handlePeerList(message);
         break;
-      case 'answer':
-        this.handleAnswer(message);
+      case 'peer-message':
+        this.handlePeerMessage(message);
         break;
-      case 'ice-candidate':
-        this.handleIceCandidate(message);
+      case 'peer-data':
+        this.handlePeerData(message);
         break;
     }
   }
 
-  private handlePeerIntroduction(message: any, ws: WebSocket): void {
+  private handlePeerIntroduction(message: any, ws?: WebSocket): void {
     if (message.deviceId === this.deviceId) return; // Ignore self
 
     const peer: ConnectedPeer = {
       id: message.deviceId,
       name: message.deviceName || `Device-${message.deviceId.substring(0, 8)}`,
       isOnline: true,
-      lastSeen: new Date()
+      lastSeen: new Date(message.timestamp || Date.now())
     };
 
+    const existingPeer = this.peers.get(message.deviceId);
     this.peers.set(message.deviceId, peer);
-    this.emit('peer:connect', peer);
-
-    // If we're the signaling server, broadcast to other peers
-    if (this.isSignalingServer && this.wsServer) {
-      this.wsServer.clients.forEach((client) => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(message));
-        }
-      });
+    
+    if (!existingPeer) {
+      console.log('New peer discovered:', peer.name, peer.id.substring(0, 8));
+      this.emit('peer:connect', peer);
     }
   }
 
-  private handleOffer(message: any): void {
-    // Handle WebRTC offer from another peer
-    const peer = this.peers.get(message.from);
-    if (peer) {
-      this.createPeerConnection(message.from, false, message.offer);
+  private handlePeerMessage(envelope: any): void {
+    // Handle message from another peer via signaling server
+    if (envelope.to === this.deviceId) {
+      console.log(`Received message from ${envelope.from}`);
+      this.emit('peer:message', envelope.from, envelope.message);
     }
   }
 
-  private handleAnswer(message: any): void {
-    // Handle WebRTC answer from another peer
-    const peer = this.peers.get(message.from);
-    if (peer && peer.peer) {
-      peer.peer.signal(message.answer);
+  private handlePeerData(envelope: any): void {
+    // Handle data from another peer via signaling server
+    if (envelope.to === this.deviceId) {
+      console.log(`Received data from ${envelope.from} (${envelope.data.length} chars base64)`);
+      const data = Buffer.from(envelope.data, 'base64');
+      this.emit('peer:data', envelope.from, data);
     }
   }
 
-  private handleIceCandidate(message: any): void {
-    // Handle ICE candidate from another peer
-    const peer = this.peers.get(message.from);
-    if (peer && peer.peer) {
-      peer.peer.signal(message.candidate);
-    }
-  }
-
-  async connectToPeer(peerId: string): Promise<boolean> {
-    if (this.peers.has(peerId)) {
-      this.createPeerConnection(peerId, true);
-      return true;
-    }
-    return false;
-  }
-
-  private createPeerConnection(peerId: string, initiator: boolean, offer?: any): void {
-    const peerConnection = new SimplePeer({
-      initiator,
-      trickle: true
-    });
-
-    const peer = this.peers.get(peerId);
-    if (peer) {
-      peer.peer = peerConnection;
-    }
-
-    peerConnection.on('signal', (data) => {
-      // Send signaling data through WebSocket
-      const message = {
-        type: data.type === 'offer' ? 'offer' : data.type === 'answer' ? 'answer' : 'ice-candidate',
-        from: this.deviceId,
-        to: peerId,
-        [data.type === 'offer' ? 'offer' : data.type === 'answer' ? 'answer' : 'candidate']: data
-      };
-
-      // Broadcast through signaling server
-      if (this.wsServer) {
-        this.wsServer.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(message));
-          }
-        });
+  private startPeriodicAnnouncements(): void {
+    const interval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        const announcement = {
+          type: 'peer-announce',
+          deviceId: this.deviceId,
+          deviceName: this.deviceName,
+          ip: 'unknown',
+          port: 8080,
+          timestamp: Date.now()
+        };
+        this.ws.send(JSON.stringify(announcement));
+      } else {
+        clearInterval(interval);
       }
-    });
-
-    peerConnection.on('connect', () => {
-      console.log('Direct P2P connection established with:', peerId);
-      if (peer) {
-        peer.isOnline = true;
-        peer.lastSeen = new Date();
-      }
-      this.emit('peer:connected', peerId);
-    });
-
-    peerConnection.on('data', (data) => {
-      this.handlePeerData(peerId, data);
-    });
-
-    peerConnection.on('error', (error) => {
-      console.error('P2P connection error with', peerId, ':', error);
-    });
-
-    peerConnection.on('close', () => {
-      console.log('P2P connection closed with:', peerId);
-      if (peer) {
-        peer.isOnline = false;
-        peer.lastSeen = new Date();
-      }
-      this.emit('peer:disconnect', peerId);
-    });
-
-    // If we received an offer, signal it to start the connection
-    if (offer) {
-      peerConnection.signal(offer);
-    }
-  }
-
-  private handlePeerData(peerId: string, data: Buffer): void {
-    try {
-      const message = JSON.parse(data.toString());
-      this.emit('peer:message', peerId, message);
-    } catch (error) {
-      // Handle binary data (file chunks)
-      this.emit('peer:data', peerId, data);
-    }
+    }, 30000); // Announce every 30 seconds
   }
 
   sendMessage(peerId: string, message: any): boolean {
     const peer = this.peers.get(peerId);
-    if (peer && peer.peer && peer.peer.connected) {
-      peer.peer.send(JSON.stringify(message));
-      return true;
+    if (peer && peer.isOnline) {
+      // Send message through signaling server to target peer
+      const envelope = {
+        type: 'peer-message',
+        from: this.deviceId,
+        to: peerId,
+        message: message
+      };
+      
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(envelope));
+        console.log(`Sent message to ${peerId} via signaling server`);
+        return true;
+      }
     }
+    
+    console.log(`Cannot send message to ${peerId}: peer not available or offline`);
     return false;
   }
 
   sendData(peerId: string, data: Buffer): boolean {
     const peer = this.peers.get(peerId);
-    if (peer && peer.peer && peer.peer.connected) {
-      peer.peer.send(data);
-      return true;
+    if (peer && peer.isOnline) {
+      // Send data through signaling server to target peer
+      const envelope = {
+        type: 'peer-data',
+        from: this.deviceId,
+        to: peerId,
+        data: data.toString('base64') // Convert to base64 for JSON transmission
+      };
+      
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(envelope));
+        console.log(`Sent data to ${peerId} via signaling server (${data.length} bytes)`);
+        return true;
+      }
     }
+    
+    console.log(`Cannot send data to ${peerId}: peer not available or offline`);
     return false;
   }
 
@@ -253,19 +249,13 @@ export class P2PService extends EventEmitter {
     return Array.from(this.peers.values());
   }
 
-  async stop(): Promise<void> {
-    // Close all peer connections
-    this.peers.forEach((peer) => {
-      if (peer.peer) {
-        peer.peer.destroy();
-      }
-    });
-    this.peers.clear();
-
-    // Close signaling server
-    if (this.wsServer) {
-      this.wsServer.close();
-      this.wsServer = null;
+  private handlePeerList(message: any): void {
+    if (message.peers && Array.isArray(message.peers)) {
+      message.peers.forEach((peerData: any) => {
+        if (peerData.deviceId !== this.deviceId) {
+          this.handlePeerIntroduction(peerData);
+        }
+      });
     }
   }
 }

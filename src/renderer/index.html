@@ -54,6 +54,25 @@
                 </div>
             </section>
 
+            <!-- Received Files Panel -->
+            <section class="panel received-panel">
+                <div class="panel-header">
+                    <h2>Received Files</h2>
+                    <div class="panel-actions">
+                        <button id="refresh-received-btn" class="btn btn-secondary">Refresh</button>
+                        <button id="open-folder-btn" class="btn btn-secondary">Open Folder</button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div id="received-files" class="file-list">
+                        <div class="empty-state">
+                            <p>No received files</p>
+                            <p class="hint">Files you receive will appear here</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Right Panel - Connected Devices -->
             <section class="panel devices-panel">
                 <div class="panel-header">
@@ -76,11 +95,20 @@
         <!-- Footer with Sync Controls -->
         <footer class="app-footer">
             <div class="sync-controls">
-                <button id="start-sync-btn" class="btn btn-primary btn-large" disabled>
-                    Start Sync
-                </button>
-                <div class="sync-status">
-                    <span id="sync-status-text">Ready to sync</span>
+                <div class="destination-controls">
+                    <label for="destination-path">Save files to:</label>
+                    <div class="destination-selector">
+                        <input type="text" id="destination-path" readonly placeholder="Click to select destination folder">
+                        <button id="select-destination-btn" class="btn btn-secondary">Browse</button>
+                    </div>
+                </div>
+                <div class="sync-actions">
+                    <button id="start-sync-btn" class="btn btn-primary btn-large" disabled>
+                        Start Sync
+                    </button>
+                    <div class="sync-status">
+                        <span id="sync-status-text">Ready to sync</span>
+                    </div>
                 </div>
             </div>
         </footer>

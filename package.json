@@ -23,22 +23,22 @@
     "release": "npm run build && electron-builder --publish=always"
   },
   "dependencies": {
-    "electron-store": "^8.2.0",
     "crypto-js": "^4.2.0",
-    "ws": "^8.18.0",
-    "simple-peer": "^9.11.1"
+    "electron-store": "^8.2.0",
+    "simple-peer": "^9.11.1",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/node": "^22.5.4",
+    "@types/simple-peer": "^9.11.8",
+    "@types/ws": "^8.5.12",
+    "concurrently": "^9.0.1",
     "electron": "^32.0.1",
     "electron-builder": "^25.0.5",
+    "ts-loader": "^9.5.1",
     "typescript": "^5.6.2",
     "webpack": "^5.94.0",
-    "webpack-cli": "^5.1.4",
-    "ts-loader": "^9.5.1",
-    "concurrently": "^9.0.1",
-    "@types/node": "^22.5.4",
-    "@types/ws": "^8.5.12",
-    "@types/simple-peer": "^9.11.8"
+    "webpack-cli": "^5.1.4"
   },
   "build": {
     "appId": "com.sinckapp.desktop",
@@ -55,11 +55,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "icon": "assets/icon.icns"
@@ -68,11 +74,17 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64", "ia32"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64", "ia32"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         }
       ],
       "icon": "assets/icon.ico"
@@ -81,15 +93,24 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "rpm",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "icon": "assets/icon.png",
