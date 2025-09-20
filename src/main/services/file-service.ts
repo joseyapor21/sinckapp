@@ -325,14 +325,16 @@ export class FileService {
         console.log(`🚀 Using WebRTC for chunk ${chunk.index}`);
         
         // Create efficient binary protocol: [header_length][header_json][chunk_data]
+        const transfer = this.activeTransfers.get(chunk.fileId);
         const header = {
           type: 'webrtc-file-chunk',
           fileId: chunk.fileId,
+          fileName: transfer?.fileName || 'unknown-file',
           chunkId: chunk.id,
           index: chunk.index,
           size: chunk.size,
           hash: chunk.hash,
-          totalChunks: this.activeTransfers.get(chunk.fileId)?.chunks.length || 1
+          totalChunks: transfer?.chunks.length || 1
         };
         
         const headerBuffer = Buffer.from(JSON.stringify(header), 'utf8');
@@ -600,10 +602,10 @@ export class FileService {
       // Track received chunks
       let fileTransfer = this.receivingFiles.get(chunkMessage.fileId);
       if (!fileTransfer) {
-        // Create a temporary file transfer record
+        // Create a temporary file transfer record with correct filename
         fileTransfer = {
           fileId: chunkMessage.fileId,
-          fileName: `received-file-${chunkMessage.fileId}`,
+          fileName: chunkMessage.fileName || `received-file-${chunkMessage.fileId}`,
           totalChunks: chunkMessage.totalChunks,
           receivedChunks: new Map(),
           fromPeer: peerId
