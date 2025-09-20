@@ -431,10 +431,13 @@ class SinckAppRenderer {
       progressContainer.appendChild(clone);
     });
 
-    // Update overall status
+    // Update overall status with transfer method indicator
     const statusText = document.getElementById('sync-status-text')!;
     const overallProgress = Math.round((progress.completedFiles / progress.totalFiles) * 100);
-    statusText.textContent = `Syncing... ${overallProgress}% complete (${progress.completedFiles}/${progress.totalFiles} files)`;
+    statusText.textContent = `🚀 WebRTC | Syncing... ${overallProgress}% complete (${progress.completedFiles}/${progress.totalFiles} files)`;
+    
+    // Update the prominent transfer method indicator (always WebRTC now)
+    this.updateTransferMethodIndicator(true);
   }
 
   private onSyncComplete(): void {
@@ -486,6 +489,25 @@ class SinckAppRenderer {
     if (device) {
       device.isOnline = false;
       this.renderDeviceList();
+    }
+  }
+
+  private updateTransferMethodIndicator(useWebRTC: boolean): void {
+    const indicator = document.getElementById('transfer-method')!;
+    const icon = indicator.querySelector('.transfer-icon')!;
+    const text = indicator.querySelector('.transfer-text')!;
+    
+    // Reset classes
+    indicator.classList.remove('webrtc', 'websocket');
+    
+    if (useWebRTC) {
+      indicator.classList.add('webrtc');
+      icon.textContent = '🚀';
+      text.textContent = 'WebRTC Fast';
+    } else {
+      indicator.classList.add('websocket');
+      icon.textContent = '📡';
+      text.textContent = 'WebSocket';
     }
   }
 

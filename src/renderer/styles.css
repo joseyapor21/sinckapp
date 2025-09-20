@@ -303,6 +303,38 @@ body {
     gap: 0.5rem;
 }
 
+/* Transfer Method Indicator */
+.transfer-method-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: #f8f9fa;
+    border: 2px solid #e9ecef;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.875rem;
+    min-width: 120px;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.transfer-method-indicator.webrtc {
+    background: #e8f5e8;
+    border-color: #27ae60;
+    color: #27ae60;
+}
+
+.transfer-method-indicator.websocket {
+    background: #fff3cd;
+    border-color: #ffc107;
+    color: #856404;
+}
+
+.transfer-icon {
+    font-size: 1.2rem;
+}
+
 .sync-status {
     font-size: 0.875rem;
     color: #666;

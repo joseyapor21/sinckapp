@@ -23,14 +23,13 @@
     "release": "npm run build && electron-builder --publish=always"
   },
   "dependencies": {
+    "@roamhq/wrtc": "github:WonderInventions/node-webrtc",
     "crypto-js": "^4.2.0",
     "electron-store": "^8.2.0",
-    "simple-peer": "^9.11.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.5.4",
-    "@types/simple-peer": "^9.11.8",
     "@types/ws": "^8.5.12",
     "concurrently": "^9.0.1",
     "electron": "^32.0.1",

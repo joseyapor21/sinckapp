@@ -1,9 +1,10 @@
 import { EventEmitter } from 'events';
-import SimplePeer from 'simple-peer';
+import * as wrtc from '@roamhq/wrtc';
 export interface WebRTCPeer {
     id: string;
     name: string;
-    peer: SimplePeer.Instance;
+    connection: wrtc.RTCPeerConnection;
+    dataChannel?: wrtc.RTCDataChannel;
     isConnected: boolean;
 }
 export declare class WebRTCService extends EventEmitter {

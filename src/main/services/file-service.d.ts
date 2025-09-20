@@ -24,12 +24,11 @@ export interface SyncProgress {
     totalBytes: number;
     transferredBytes: number;
     currentTransfers: FileTransfer[];
+    useWebRTC: boolean;
 }
 export declare class FileService {
     private readonly CHUNK_SIZE;
-    private readonly WEBRTC_CHUNK_SIZE;
     private readonly CHUNK_DELAY;
-    private readonly WEBRTC_CHUNK_DELAY;
     private activeTransfers;
     private destinationFolder;
     private p2pService;
@@ -38,6 +37,7 @@ export declare class FileService {
     initialize(p2pService?: P2PService): Promise<void>;
     setDestinationFolder(folder: string): void;
     getDestinationFolder(): string;
+    private waitForWebRTCConnection;
     getReceivedFiles(): Promise<any[]>;
     startSync(targetDeviceId: string, filePaths: string[]): Promise<string>;
     private prepareFileTransfer;
@@ -52,9 +52,6 @@ export declare class FileService {
     private handleWebRTCData;
     private receivingFiles;
     private handleFileTransferStart;
-    private pendingChunks;
-    private handleIncomingChunkMessage;
-    private handleIncomingChunkData;
     private processCompleteChunk;
 }
 //# sourceMappingURL=file-service.d.ts.map

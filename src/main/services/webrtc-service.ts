@@ -1,10 +1,11 @@
 import { EventEmitter } from 'events';
-import SimplePeer from 'simple-peer';
+import * as wrtc from '@roamhq/wrtc';
 
 export interface WebRTCPeer {
   id: string;
   name: string;
-  peer: SimplePeer.Instance;
+  connection: wrtc.RTCPeerConnection;
+  dataChannel?: wrtc.RTCDataChannel;
   isConnected: boolean;
 }
 
@@ -38,26 +39,40 @@ export class WebRTCService extends EventEmitter {
       console.log(`Creating WebRTC connection to ${peerId}`);
       
       // Create peer connection as initiator
-      const peer = new SimplePeer({
-        initiator: true,
-        trickle: false, // Wait for all ICE candidates
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
-        }
+      const connection = new wrtc.RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+      });
+
+      // Create data channel for file transfer
+      const dataChannel = connection.createDataChannel('fileTransfer', {
+        ordered: true
       });
 
       const webrtcPeer: WebRTCPeer = {
         id: peerId,
         name: `Peer-${peerId.substring(0, 8)}`,
-        peer,
+        connection,
+        dataChannel,
         isConnected: false
       };
 
       this.peers.set(peerId, webrtcPeer);
       this.setupPeerEventHandlers(webrtcPeer);
+
+      // Create offer
+      const offer = await connection.createOffer();
+      await connection.setLocalDescription(offer);
+
+      // Send offer through signaling
+      this.signalingService.sendMessage(peerId, {
+        type: 'webrtc-offer',
+        from: this.deviceId,
+        to: peerId,
+        offer: offer
+      });
 
       return true;
     } catch (error) {
@@ -67,110 +82,132 @@ export class WebRTCService extends EventEmitter {
   }
 
   private setupPeerEventHandlers(webrtcPeer: WebRTCPeer): void {
-    const { peer, id } = webrtcPeer;
+    const { connection, dataChannel, id } = webrtcPeer;
 
-    peer.on('signal', (data) => {
-      console.log(`Sending signal to ${id}`);
-      if (data.type === 'offer') {
-        this.signalingService.sendMessage(id, {
-          type: 'webrtc-offer',
-          from: this.deviceId,
-          to: id,
-          offer: data
-        });
-      } else if (data.type === 'answer') {
-        this.signalingService.sendMessage(id, {
-          type: 'webrtc-answer',
-          from: this.deviceId,
-          to: id,
-          answer: data
-        });
-      } else if ((data as any).candidate) {
+    // ICE candidate handling
+    connection.onicecandidate = (event: wrtc.RTCPeerConnectionIceEvent) => {
+      if (event.candidate) {
+        console.log(`Sending ICE candidate to ${id}`);
         this.signalingService.sendMessage(id, {
           type: 'webrtc-ice-candidate',
           from: this.deviceId,
           to: id,
-          candidate: data
+          candidate: event.candidate
         });
       }
-    });
+    };
 
-    peer.on('connect', () => {
-      console.log(`✅ WebRTC connection established with ${id}`);
-      webrtcPeer.isConnected = true;
-      this.emit('peer:connected', id);
-    });
+    // Connection state changes
+    connection.onconnectionstatechange = () => {
+      console.log(`Connection state with ${id}: ${connection.connectionState}`);
+      if (connection.connectionState === 'connected') {
+        console.log(`✅ WebRTC connection established with ${id}`);
+        webrtcPeer.isConnected = true;
+        this.emit('peer:connected', id);
+      } else if (connection.connectionState === 'disconnected' || connection.connectionState === 'failed') {
+        console.log(`🔌 WebRTC connection closed with ${id}`);
+        webrtcPeer.isConnected = false;
+        this.peers.delete(id);
+        this.emit('peer:disconnected', id);
+      }
+    };
 
-    peer.on('data', (data) => {
-      console.log(`📦 Received data from ${id}: ${data.length} bytes`);
-      this.emit('peer:data', id, data);
-    });
+    // Data channel handling for initiator
+    if (dataChannel) {
+      dataChannel.onopen = () => {
+        console.log(`Data channel opened with ${id}`);
+      };
 
-    peer.on('close', () => {
-      console.log(`🔌 WebRTC connection closed with ${id}`);
-      webrtcPeer.isConnected = false;
-      this.peers.delete(id);
-      this.emit('peer:disconnected', id);
-    });
+      dataChannel.onmessage = (event: MessageEvent) => {
+        console.log(`📦 Received data from ${id}: ${event.data.byteLength || event.data.length} bytes`);
+        this.emit('peer:data', id, event.data);
+      };
 
-    peer.on('error', (error) => {
-      console.error(`❌ WebRTC error with ${id}:`, error);
-      this.peers.delete(id);
-      this.emit('peer:error', id, error);
-    });
+      dataChannel.onerror = (error: Event) => {
+        console.error(`❌ Data channel error with ${id}:`, error);
+        this.emit('peer:error', id, error);
+      };
+    }
+
+    // Handle incoming data channels (for answerer)
+    connection.ondatachannel = (event: wrtc.RTCDataChannelEvent) => {
+      const channel = event.channel;
+      webrtcPeer.dataChannel = channel;
+
+      channel.onopen = () => {
+        console.log(`Incoming data channel opened with ${id}`);
+      };
+
+      channel.onmessage = (event: MessageEvent) => {
+        console.log(`📦 Received data from ${id}: ${event.data.byteLength || event.data.length} bytes`);
+        this.emit('peer:data', id, event.data);
+      };
+
+      channel.onerror = (error: Event) => {
+        console.error(`❌ Data channel error with ${id}:`, error);
+        this.emit('peer:error', id, error);
+      };
+    };
   }
 
-  private handleOffer(peerId: string, message: any): void {
+  private async handleOffer(peerId: string, message: any): Promise<void> {
     try {
       console.log(`Received WebRTC offer from ${peerId}`);
       
       // Create peer connection as answerer
-      const peer = new SimplePeer({
-        initiator: false,
-        trickle: false,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
-        }
+      const connection = new wrtc.RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
       });
 
       const webrtcPeer: WebRTCPeer = {
         id: peerId,
         name: `Peer-${peerId.substring(0, 8)}`,
-        peer,
+        connection,
         isConnected: false
       };
 
       this.peers.set(peerId, webrtcPeer);
       this.setupPeerEventHandlers(webrtcPeer);
       
-      // Signal with the offer data
-      peer.signal(message.offer);
+      // Set remote description with the offer
+      await connection.setRemoteDescription(message.offer);
+      
+      // Create and send answer
+      const answer = await connection.createAnswer();
+      await connection.setLocalDescription(answer);
+
+      this.signalingService.sendMessage(peerId, {
+        type: 'webrtc-answer',
+        from: this.deviceId,
+        to: peerId,
+        answer: answer
+      });
     } catch (error) {
       console.error('Failed to handle WebRTC offer:', error);
     }
   }
 
-  private handleAnswer(peerId: string, message: any): void {
+  private async handleAnswer(peerId: string, message: any): Promise<void> {
     try {
       const webrtcPeer = this.peers.get(peerId);
       if (webrtcPeer) {
         console.log(`Received WebRTC answer from ${peerId}`);
-        webrtcPeer.peer.signal(message.answer);
+        await webrtcPeer.connection.setRemoteDescription(message.answer);
       }
     } catch (error) {
       console.error('Failed to handle WebRTC answer:', error);
     }
   }
 
-  private handleIceCandidate(peerId: string, message: any): void {
+  private async handleIceCandidate(peerId: string, message: any): Promise<void> {
     try {
       const webrtcPeer = this.peers.get(peerId);
       if (webrtcPeer) {
         console.log(`Received ICE candidate from ${peerId}`);
-        webrtcPeer.peer.signal(message.candidate);
+        await webrtcPeer.connection.addIceCandidate(message.candidate);
       }
     } catch (error) {
       console.error('Failed to handle ICE candidate:', error);
@@ -179,10 +216,12 @@ export class WebRTCService extends EventEmitter {
 
   sendData(peerId: string, data: Buffer): boolean {
     const webrtcPeer = this.peers.get(peerId);
-    if (webrtcPeer && webrtcPeer.isConnected) {
+    if (webrtcPeer && webrtcPeer.isConnected && webrtcPeer.dataChannel) {
       try {
-        webrtcPeer.peer.send(data);
-        return true;
+        if (webrtcPeer.dataChannel.readyState === 'open') {
+          webrtcPeer.dataChannel.send(new Uint8Array(data));
+          return true;
+        }
       } catch (error) {
         console.error(`Failed to send data to ${peerId}:`, error);
         return false;
@@ -205,14 +244,20 @@ export class WebRTCService extends EventEmitter {
   disconnect(peerId: string): void {
     const webrtcPeer = this.peers.get(peerId);
     if (webrtcPeer) {
-      webrtcPeer.peer.destroy();
+      if (webrtcPeer.dataChannel) {
+        webrtcPeer.dataChannel.close();
+      }
+      webrtcPeer.connection.close();
       this.peers.delete(peerId);
     }
   }
 
   destroy(): void {
     for (const [peerId, webrtcPeer] of this.peers.entries()) {
-      webrtcPeer.peer.destroy();
+      if (webrtcPeer.dataChannel) {
+        webrtcPeer.dataChannel.close();
+      }
+      webrtcPeer.connection.close();
     }
     this.peers.clear();
   }

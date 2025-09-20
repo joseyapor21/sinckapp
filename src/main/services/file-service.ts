@@ -31,13 +31,12 @@ export interface SyncProgress {
   totalBytes: number;
   transferredBytes: number;
   currentTransfers: FileTransfer[];
+  useWebRTC: boolean;
 }
 
 export class FileService {
-  private readonly CHUNK_SIZE = 32 * 1024; // 32KB for WebSocket, larger for WebRTC
-  private readonly WEBRTC_CHUNK_SIZE = 256 * 1024; // 256KB for WebRTC (much faster)
-  private readonly CHUNK_DELAY = 50; // 50ms delay between chunks for large files
-  private readonly WEBRTC_CHUNK_DELAY = 5; // Much faster for WebRTC
+  private readonly CHUNK_SIZE = 256 * 1024; // 256KB for WebRTC only
+  private readonly CHUNK_DELAY = 5; // Fast WebRTC timing
   private activeTransfers: Map<string, FileTransfer> = new Map();
   private destinationFolder: string = '';
   private p2pService: P2PService | null = null;
@@ -47,7 +46,8 @@ export class FileService {
     completedFiles: 0,
     totalBytes: 0,
     transferredBytes: 0,
-    currentTransfers: []
+    currentTransfers: [],
+    useWebRTC: true
   };
 
   async initialize(p2pService?: P2PService): Promise<void> {
@@ -89,6 +89,28 @@ export class FileService {
 
   getDestinationFolder(): string {
     return this.destinationFolder;
+  }
+
+  private async waitForWebRTCConnection(targetDeviceId: string, timeoutMs: number = 10000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const startTime = Date.now();
+      
+      const checkConnection = () => {
+        if (this.webrtcService?.isConnected(targetDeviceId)) {
+          resolve();
+          return;
+        }
+        
+        if (Date.now() - startTime > timeoutMs) {
+          reject(new Error('WebRTC connection timeout'));
+          return;
+        }
+        
+        setTimeout(checkConnection, 500); // Check every 500ms
+      };
+      
+      checkConnection();
+    });
   }
 
   async getReceivedFiles(): Promise<any[]> {
@@ -138,16 +160,21 @@ export class FileService {
     const syncId = crypto.randomUUID();
     
     try {
-      // Try to establish WebRTC connection for faster transfer
+      // Try to establish WebRTC connection first (preferred method)
       if (this.webrtcService && !this.webrtcService.isConnected(targetDeviceId)) {
-        console.log('🚀 Establishing WebRTC fast lane...');
-        this.webrtcService.createConnection(targetDeviceId);
-        // Give WebRTC a moment to connect (non-blocking)
-        setTimeout(() => {
-          if (this.webrtcService?.isConnected(targetDeviceId)) {
-            console.log('✅ WebRTC fast lane ready for faster transfers!');
+        console.log('🚀 Attempting WebRTC connection...');
+        try {
+          await this.webrtcService.createConnection(targetDeviceId);
+          
+          // Wait for WebRTC connection with shorter timeout
+          await this.waitForWebRTCConnection(targetDeviceId, 5000); // 5 second timeout
+          
+          if (this.webrtcService.isConnected(targetDeviceId)) {
+            console.log('✅ WebRTC connection established!');
           }
-        }, 2000);
+        } catch (error: any) {
+          console.warn('⚠️ WebRTC connection failed, will use WebSocket fallback:', error.message);
+        }
       }
 
       // Calculate total size and prepare transfers
@@ -169,7 +196,8 @@ export class FileService {
         completedFiles: 0,
         totalBytes: totalSize,
         transferredBytes: 0,
-        currentTransfers: transfers
+        currentTransfers: transfers,
+        useWebRTC: true
       };
 
       // Start transfers
@@ -269,11 +297,8 @@ export class FileService {
         this.updateSyncProgress();
         
         // Add delay for large files to prevent overwhelming the connection
-        // Use different delays based on connection type
         if (transfer.chunks.length > 10 && i < transfer.chunks.length - 1) {
-          const useWebRTC = this.webrtcService && this.webrtcService.isConnected(transfer.targetDeviceId);
-          const delay = useWebRTC ? this.WEBRTC_CHUNK_DELAY : this.CHUNK_DELAY;
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise(resolve => setTimeout(resolve, this.CHUNK_DELAY));
         }
         
         console.log(`Sent chunk ${i + 1}/${transfer.chunks.length} for ${transfer.fileName}`);
@@ -291,19 +316,18 @@ export class FileService {
 
   private async sendChunk(targetDeviceId: string, chunk: FileChunk, retryCount: number = 0): Promise<void> {
     if (!this.p2pService) {
-      console.error('P2P service not available for file transfer');
-      throw new Error('P2P service not initialized');
+      throw new Error('P2P service not available for file transfer');
     }
 
     const maxRetries = 3;
     const retryDelay = 1000; // 1 second
 
     try {
-      // Check if WebRTC connection is available for faster transfer
+      // Try WebRTC first if available
       const useWebRTC = this.webrtcService && this.webrtcService.isConnected(targetDeviceId);
       
       if (useWebRTC) {
-        console.log(`🚀 Using WebRTC fast lane for chunk ${chunk.index}`);
+        console.log(`🚀 Using WebRTC for chunk ${chunk.index}`);
         
         // Create combined message with metadata + data for WebRTC
         const webrtcMessage = {
@@ -497,9 +521,6 @@ export class FileService {
 
   private handlePeerMessage(peerId: string, message: any): void {
     switch (message.type) {
-      case 'file-chunk':
-        this.handleIncomingChunkMessage(peerId, message);
-        break;
       case 'file-start':
         this.handleFileTransferStart(peerId, message);
         break;
@@ -509,8 +530,8 @@ export class FileService {
   }
 
   private handlePeerData(peerId: string, data: Buffer): void {
-    // This will be called when chunk data is received
-    this.handleIncomingChunkData(peerId, data);
+    // WebSocket data handling is no longer used - using WebRTC only
+    console.log(`Received WebSocket data from ${peerId}, ignoring (using WebRTC)`);
   }
 
   private handleWebRTCData(peerId: string, data: Buffer): void {
@@ -547,39 +568,7 @@ export class FileService {
     });
   }
 
-  private pendingChunks: Map<string, { message: any, data?: Buffer }> = new Map();
-
-  private handleIncomingChunkMessage(peerId: string, message: any): void {
-    console.log(`Receiving chunk ${message.index} metadata for file ${message.fileId}`);
-    
-    const chunkKey = `${message.fileId}-${message.index}`;
-    const existing = this.pendingChunks.get(chunkKey) || { message: undefined, data: undefined };
-    
-    existing.message = message;
-    this.pendingChunks.set(chunkKey, existing);
-    
-    // If we already have the data, process immediately
-    if (existing.data) {
-      this.processCompleteChunk(peerId, message, existing.data);
-      this.pendingChunks.delete(chunkKey);
-    }
-  }
-
-  private handleIncomingChunkData(peerId: string, data: Buffer): void {
-    console.log(`Received chunk data: ${data.length} bytes`);
-    
-    // Find the most recent pending chunk that doesn't have data yet
-    for (const [chunkKey, chunk] of this.pendingChunks.entries()) {
-      if (chunk.message && !chunk.data) {
-        chunk.data = data;
-        this.processCompleteChunk(peerId, chunk.message, data);
-        this.pendingChunks.delete(chunkKey);
-        return;
-      }
-    }
-    
-    console.warn('Received chunk data but no pending chunk metadata found');
-  }
+  // WebSocket pendingChunks logic removed - using WebRTC only
 
   private async processCompleteChunk(peerId: string, chunkMessage: any, chunkData: Buffer): Promise<void> {
     try {

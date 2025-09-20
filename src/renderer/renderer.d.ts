@@ -31,6 +31,7 @@ declare class SinckAppRenderer {
     private onSyncComplete;
     private addConnectedDevice;
     private removeConnectedDevice;
+    private updateTransferMethodIndicator;
     private updateUI;
 }
 //# sourceMappingURL=renderer.d.ts.map
