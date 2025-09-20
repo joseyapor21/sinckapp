@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@roamhq/wrtc": "github:WonderInventions/node-webrtc",
+    "@roamhq/wrtc-darwin-arm64": "^0.9.1",
     "crypto-js": "^4.2.0",
     "electron-store": "^8.2.0",
     "ws": "^8.18.0"
