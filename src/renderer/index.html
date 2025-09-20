@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SinckApp - P2P File Sync</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-content">
+                <h1>SinckApp</h1>
+                <div class="device-info">
+                    <span id="device-name">Loading...</span>
+                    <span id="device-id">ID: Loading...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="app-main">
+            <!-- Left Panel - File Browser -->
+            <section class="panel file-panel">
+                <div class="panel-header">
+                    <h2>Local Files</h2>
+                    <div class="panel-actions">
+                        <button id="select-files-btn" class="btn btn-primary">Select Files</button>
+                        <button id="select-folder-btn" class="btn btn-secondary">Select Folder</button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div id="selected-files" class="file-list">
+                        <div class="empty-state">
+                            <p>No files selected</p>
+                            <p class="hint">Click "Select Files" or "Select Folder" to choose files to sync</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Center Panel - Transfer Progress -->
+            <section class="panel progress-panel">
+                <div class="panel-header">
+                    <h2>Transfer Progress</h2>
+                </div>
+                <div class="panel-content">
+                    <div id="sync-progress" class="progress-container">
+                        <div class="empty-state">
+                            <p>No active transfers</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Panel - Connected Devices -->
+            <section class="panel devices-panel">
+                <div class="panel-header">
+                    <h2>Connected Devices</h2>
+                    <div class="panel-actions">
+                        <button id="refresh-devices-btn" class="btn btn-secondary">Refresh</button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div id="connected-devices" class="device-list">
+                        <div class="empty-state">
+                            <p>No devices connected</p>
+                            <p class="hint">Devices will appear here when they come online</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer with Sync Controls -->
+        <footer class="app-footer">
+            <div class="sync-controls">
+                <button id="start-sync-btn" class="btn btn-primary btn-large" disabled>
+                    Start Sync
+                </button>
+                <div class="sync-status">
+                    <span id="sync-status-text">Ready to sync</span>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Templates -->
+    <template id="file-item-template">
+        <div class="file-item">
+            <div class="file-icon">📄</div>
+            <div class="file-info">
+                <div class="file-name"></div>
+                <div class="file-path"></div>
+            </div>
+            <div class="file-actions">
+                <button class="btn btn-small btn-danger">Remove</button>
+            </div>
+        </div>
+    </template>
+
+    <template id="device-item-template">
+        <div class="device-item">
+            <div class="device-icon">💻</div>
+            <div class="device-info">
+                <div class="device-name"></div>
+                <div class="device-id"></div>
+                <div class="device-status"></div>
+            </div>
+            <div class="device-actions">
+                <button class="btn btn-small btn-primary select-device-btn">Select</button>
+            </div>
+        </div>
+    </template>
+
+    <template id="progress-item-template">
+        <div class="progress-item">
+            <div class="progress-header">
+                <span class="file-name"></span>
+                <span class="progress-percentage">0%</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill"></div>
+            </div>
+            <div class="progress-details">
+                <span class="transfer-speed">0 KB/s</span>
+                <span class="eta">ETA: --</span>
+            </div>
+        </div>
+    </template>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

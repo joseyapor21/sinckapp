@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  sinckapp-signal:
+    build: .
+    container_name: sinckapp-signal-server
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - NODE_ENV=production
+    restart: unless-stopped
+    networks:
+      - sinckapp-network
+    volumes:
+      - /var/log/sinckapp:/var/log
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sinckapp.rule=Host(`signal.your-domain.com`)"
+      - "traefik.http.routers.sinckapp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.sinckapp.loadbalancer.server.port=8080"
+
+networks:
+  sinckapp-network:
+    driver: bridge

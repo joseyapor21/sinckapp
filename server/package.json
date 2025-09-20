@@ -1,0 +1,23 @@
+{
+  "name": "sinckapp-signal-server",
+  "version": "1.0.0",
+  "description": "Signal server for SinckApp P2P file synchronization",
+  "main": "signal-server.js",
+  "scripts": {
+    "start": "node signal-server.js",
+    "dev": "nodemon signal-server.js",
+    "pm2:start": "pm2 start signal-server.js --name sinckapp-signal",
+    "pm2:stop": "pm2 stop sinckapp-signal",
+    "pm2:restart": "pm2 restart sinckapp-signal",
+    "pm2:logs": "pm2 logs sinckapp-signal"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "keywords": ["p2p", "file-sync", "signal-server", "webrtc"],
+  "author": "SinckApp",
+  "license": "MIT"
+}
