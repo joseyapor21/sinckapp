@@ -128,6 +128,21 @@ class SignalServer {
         this.forwardToTarget(message, senderWs);
         break;
         
+      case 'webrtc-offer':
+        console.log(`🚀 Forwarding WebRTC offer from ${message.from || 'unknown'} to ${message.to || 'unknown'}`);
+        this.forwardToTarget(message, senderWs);
+        break;
+        
+      case 'webrtc-answer':
+        console.log(`🚀 Forwarding WebRTC answer from ${message.from || 'unknown'} to ${message.to || 'unknown'}`);
+        this.forwardToTarget(message, senderWs);
+        break;
+        
+      case 'webrtc-ice-candidate':
+        console.log(`🚀 Forwarding WebRTC ICE candidate from ${message.from || 'unknown'} to ${message.to || 'unknown'}`);
+        this.forwardToTarget(message, senderWs);
+        break;
+        
       case 'offer':
       case 'answer':
       case 'ice-candidate':

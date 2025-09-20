@@ -2,6 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { P2PService } from './p2p-service-simple';
+import { WebRTCService } from './webrtc-service';
 
 export interface FileChunk {
   id: string;
@@ -33,10 +34,14 @@ export interface SyncProgress {
 }
 
 export class FileService {
-  private readonly CHUNK_SIZE = 64 * 1024; // 64KB
+  private readonly CHUNK_SIZE = 32 * 1024; // 32KB for WebSocket, larger for WebRTC
+  private readonly WEBRTC_CHUNK_SIZE = 256 * 1024; // 256KB for WebRTC (much faster)
+  private readonly CHUNK_DELAY = 50; // 50ms delay between chunks for large files
+  private readonly WEBRTC_CHUNK_DELAY = 5; // Much faster for WebRTC
   private activeTransfers: Map<string, FileTransfer> = new Map();
   private destinationFolder: string = '';
   private p2pService: P2PService | null = null;
+  private webrtcService: WebRTCService | null = null;
   private syncProgress: SyncProgress = {
     totalFiles: 0,
     completedFiles: 0,
@@ -58,6 +63,19 @@ export class FileService {
       
       this.p2pService.on('peer:data', (peerId: string, data: Buffer) => {
         this.handlePeerData(peerId, data);
+      });
+
+      // Initialize WebRTC service for faster transfers
+      this.webrtcService = new WebRTCService(this.p2pService, 'device-id');
+      
+      // Set up WebRTC event listeners
+      this.webrtcService.on('peer:data', (peerId: string, data: Buffer) => {
+        console.log(`📦 WebRTC data from ${peerId}: ${data.length} bytes`);
+        this.handleWebRTCData(peerId, data);
+      });
+      
+      this.webrtcService.on('peer:connected', (peerId: string) => {
+        console.log(`🚀 WebRTC fast lane established with ${peerId}`);
       });
     }
     
@@ -120,6 +138,18 @@ export class FileService {
     const syncId = crypto.randomUUID();
     
     try {
+      // Try to establish WebRTC connection for faster transfer
+      if (this.webrtcService && !this.webrtcService.isConnected(targetDeviceId)) {
+        console.log('🚀 Establishing WebRTC fast lane...');
+        this.webrtcService.createConnection(targetDeviceId);
+        // Give WebRTC a moment to connect (non-blocking)
+        setTimeout(() => {
+          if (this.webrtcService?.isConnected(targetDeviceId)) {
+            console.log('✅ WebRTC fast lane ready for faster transfers!');
+          }
+        }, 2000);
+      }
+
       // Calculate total size and prepare transfers
       let totalSize = 0;
       const transfers: FileTransfer[] = [];
@@ -225,8 +255,11 @@ export class FileService {
         chunk.hash = crypto.createHash('sha256').update(buffer).digest('hex');
         chunk.data = buffer;
         
-        // Send chunk (this would integrate with P2P service)
+        // Send chunk
         await this.sendChunk(transfer.targetDeviceId, chunk);
+        
+        // Clear chunk data to free memory after sending
+        chunk.data = Buffer.alloc(0);
         
         // Mark chunk as completed
         transfer.completedChunks.add(i);
@@ -234,6 +267,16 @@ export class FileService {
         
         // Update overall progress
         this.updateSyncProgress();
+        
+        // Add delay for large files to prevent overwhelming the connection
+        // Use different delays based on connection type
+        if (transfer.chunks.length > 10 && i < transfer.chunks.length - 1) {
+          const useWebRTC = this.webrtcService && this.webrtcService.isConnected(transfer.targetDeviceId);
+          const delay = useWebRTC ? this.WEBRTC_CHUNK_DELAY : this.CHUNK_DELAY;
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+        
+        console.log(`Sent chunk ${i + 1}/${transfer.chunks.length} for ${transfer.fileName}`);
       }
       
       await fileHandle.close();
@@ -246,39 +289,86 @@ export class FileService {
     }
   }
 
-  private async sendChunk(targetDeviceId: string, chunk: FileChunk): Promise<void> {
+  private async sendChunk(targetDeviceId: string, chunk: FileChunk, retryCount: number = 0): Promise<void> {
     if (!this.p2pService) {
       console.error('P2P service not available for file transfer');
       throw new Error('P2P service not initialized');
     }
 
+    const maxRetries = 3;
+    const retryDelay = 1000; // 1 second
+
     try {
-      // Send chunk metadata first
-      const chunkMessage = {
-        type: 'file-chunk',
-        fileId: chunk.fileId,
-        chunkId: chunk.id,
-        index: chunk.index,
-        size: chunk.size,
-        hash: chunk.hash,
-        totalChunks: this.activeTransfers.get(chunk.fileId)?.chunks.length || 1
-      };
+      // Check if WebRTC connection is available for faster transfer
+      const useWebRTC = this.webrtcService && this.webrtcService.isConnected(targetDeviceId);
+      
+      if (useWebRTC) {
+        console.log(`🚀 Using WebRTC fast lane for chunk ${chunk.index}`);
+        
+        // Create combined message with metadata + data for WebRTC
+        const webrtcMessage = {
+          type: 'webrtc-file-chunk',
+          fileId: chunk.fileId,
+          chunkId: chunk.id,
+          index: chunk.index,
+          size: chunk.size,
+          hash: chunk.hash,
+          totalChunks: this.activeTransfers.get(chunk.fileId)?.chunks.length || 1,
+          data: chunk.data
+        };
+        
+        // Serialize the message
+        const messageBuffer = Buffer.from(JSON.stringify({
+          ...webrtcMessage,
+          data: chunk.data.toString('base64') // Convert data for JSON
+        }));
+        
+        const success = this.webrtcService!.sendData(targetDeviceId, messageBuffer);
+        if (!success) {
+          throw new Error('Failed to send via WebRTC');
+        }
+        
+        console.log(`✅ WebRTC sent chunk ${chunk.index} (${chunk.data.length} bytes) to ${targetDeviceId}`);
+      } else {
+        // Fallback to WebSocket method
+        console.log(`📡 Using WebSocket for chunk ${chunk.index} (WebRTC not available)`);
+        
+        // Send chunk metadata first
+        const chunkMessage = {
+          type: 'file-chunk',
+          fileId: chunk.fileId,
+          chunkId: chunk.id,
+          index: chunk.index,
+          size: chunk.size,
+          hash: chunk.hash,
+          totalChunks: this.activeTransfers.get(chunk.fileId)?.chunks.length || 1
+        };
 
-      const messageSent = this.p2pService.sendMessage(targetDeviceId, chunkMessage);
-      if (!messageSent) {
-        throw new Error('Failed to send chunk metadata');
+        const messageSent = this.p2pService.sendMessage(targetDeviceId, chunkMessage);
+        if (!messageSent) {
+          throw new Error('Failed to send chunk metadata');
+        }
+
+        // Add small delay between metadata and data
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        // Send chunk data
+        const dataSent = this.p2pService.sendData(targetDeviceId, chunk.data);
+        if (!dataSent) {
+          throw new Error('Failed to send chunk data');
+        }
+
+        console.log(`✅ WebSocket sent chunk ${chunk.index} (${chunk.data.length} bytes) to ${targetDeviceId}`);
       }
-
-      // Send chunk data
-      const dataSent = this.p2pService.sendData(targetDeviceId, chunk.data);
-      if (!dataSent) {
-        throw new Error('Failed to send chunk data');
-      }
-
-      console.log(`Sent chunk ${chunk.index} of file ${chunk.fileId} to ${targetDeviceId}`);
     } catch (error) {
-      console.error('Failed to send chunk:', error);
-      throw error;
+      if (retryCount < maxRetries) {
+        console.warn(`⚠️ Chunk ${chunk.index} failed, retrying in ${retryDelay}ms (attempt ${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        return this.sendChunk(targetDeviceId, chunk, retryCount + 1);
+      } else {
+        console.error(`❌ Failed to send chunk ${chunk.index} after ${maxRetries} attempts:`, error);
+        throw error;
+      }
     }
   }
 
@@ -315,12 +405,15 @@ export class FileService {
         return false;
       }
 
-      // Save chunk to temporary location
-      const tempDir = path.join(process.cwd(), 'temp', chunk.fileId);
+      // Save chunk to temporary location  
+      const os = require('os');
+      const tempDir = path.join(os.tmpdir(), 'sinckapp', chunk.fileId);
       await fs.mkdir(tempDir, { recursive: true });
       
       const chunkPath = path.join(tempDir, `chunk-${chunk.index}`);
       await fs.writeFile(chunkPath, chunk.data);
+      
+      console.log(`Saved chunk ${chunk.index} to: ${chunkPath}`);
       
       console.log(`Received chunk ${chunk.index} for file ${chunk.fileId}`);
       return true;
@@ -333,7 +426,8 @@ export class FileService {
 
   async assembleFile(fileId: string, fileName: string, totalChunks: number, outputPath?: string): Promise<boolean> {
     try {
-      const tempDir = path.join(process.cwd(), 'temp', fileId);
+      const os = require('os');
+      const tempDir = path.join(os.tmpdir(), 'sinckapp', fileId);
       const finalOutputPath = outputPath || this.destinationFolder;
       
       console.log(`Assembling file: ${fileName} from ${totalChunks} chunks`);
@@ -419,6 +513,25 @@ export class FileService {
     this.handleIncomingChunkData(peerId, data);
   }
 
+  private handleWebRTCData(peerId: string, data: Buffer): void {
+    try {
+      // Parse WebRTC message
+      const message = JSON.parse(data.toString());
+      
+      if (message.type === 'webrtc-file-chunk') {
+        console.log(`📦 WebRTC chunk ${message.index} received from ${peerId}`);
+        
+        // Convert base64 data back to buffer
+        const chunkData = Buffer.from(message.data, 'base64');
+        
+        // Process the chunk directly
+        this.processCompleteChunk(peerId, message, chunkData);
+      }
+    } catch (error) {
+      console.error('Failed to handle WebRTC data:', error);
+    }
+  }
+
   private receivingFiles: Map<string, any> = new Map(); // Track incoming file transfers
 
   private handleFileTransferStart(peerId: string, message: any): void {
@@ -480,11 +593,14 @@ export class FileService {
       console.log(`Successfully received chunk ${chunkMessage.index} for file ${chunkMessage.fileId}`);
 
       // Save chunk to temporary location
-      const tempDir = path.join(process.cwd(), 'temp', chunkMessage.fileId);
+      const os = require('os');
+      const tempDir = path.join(os.tmpdir(), 'sinckapp', chunkMessage.fileId);
       await fs.mkdir(tempDir, { recursive: true });
       
       const chunkPath = path.join(tempDir, `chunk-${chunkMessage.index}`);
       await fs.writeFile(chunkPath, chunkData);
+      
+      console.log(`💾 Saved chunk ${chunkMessage.index} to: ${chunkPath}`);
 
       // Track received chunks
       let fileTransfer = this.receivingFiles.get(chunkMessage.fileId);

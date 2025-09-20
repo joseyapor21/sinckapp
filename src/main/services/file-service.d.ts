@@ -27,9 +27,13 @@ export interface SyncProgress {
 }
 export declare class FileService {
     private readonly CHUNK_SIZE;
+    private readonly WEBRTC_CHUNK_SIZE;
+    private readonly CHUNK_DELAY;
+    private readonly WEBRTC_CHUNK_DELAY;
     private activeTransfers;
     private destinationFolder;
     private p2pService;
+    private webrtcService;
     private syncProgress;
     initialize(p2pService?: P2PService): Promise<void>;
     setDestinationFolder(folder: string): void;
@@ -45,6 +49,7 @@ export declare class FileService {
     assembleFile(fileId: string, fileName: string, totalChunks: number, outputPath?: string): Promise<boolean>;
     private handlePeerMessage;
     private handlePeerData;
+    private handleWebRTCData;
     private receivingFiles;
     private handleFileTransferStart;
     private pendingChunks;
