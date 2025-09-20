@@ -106,6 +106,8 @@ class SignalServer {
   }
 
   handleMessage(message, senderWs, req) {
+    console.log(`Received message type: ${message.type} from peer`);
+    
     switch (message.type) {
       case 'peer-announce':
       case 'introduce':
@@ -116,6 +118,16 @@ class SignalServer {
         this.sendPeerList(senderWs);
         break;
         
+      case 'peer-message':
+        console.log(`Forwarding peer-message from ${message.from} to ${message.to}`);
+        this.forwardToTarget(message, senderWs);
+        break;
+        
+      case 'peer-data':
+        console.log(`Forwarding peer-data from ${message.from} to ${message.to} (${message.data ? message.data.length : 0} chars)`);
+        this.forwardToTarget(message, senderWs);
+        break;
+        
       case 'offer':
       case 'answer':
       case 'ice-candidate':
@@ -124,6 +136,7 @@ class SignalServer {
         break;
         
       default:
+        console.log(`Unknown message type: ${message.type}, broadcasting to all peers`);
         // Forward unknown messages to all peers
         this.broadcastToOthers(message, senderWs);
     }
@@ -154,8 +167,12 @@ class SignalServer {
       const targetPeer = this.peers.get(message.to);
       if (targetPeer && targetPeer.ws.readyState === WebSocket.OPEN) {
         targetPeer.ws.send(JSON.stringify(message));
+        console.log(`✅ Message forwarded to ${targetPeer.name} (${message.to})`);
+      } else {
+        console.log(`❌ Target peer ${message.to} not found or not connected`);
       }
     } else {
+      console.log(`📡 Broadcasting message to all peers (no specific target)`);
       // If no specific target, broadcast to all except sender
       this.broadcastToOthers(message, senderWs);
     }
