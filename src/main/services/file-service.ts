@@ -2,7 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { P2PService } from './p2p-service-simple';
-import { WebRTCService } from './webrtc-service';
+// WebRTC now handled in renderer process
 
 export interface FileChunk {
   id: string;
@@ -40,7 +40,7 @@ export class FileService {
   private activeTransfers: Map<string, FileTransfer> = new Map();
   private destinationFolder: string = '';
   private p2pService: P2PService | null = null;
-  private webrtcService: WebRTCService | null = null;
+  // WebRTC now handled in renderer process via IPC
   private syncProgress: SyncProgress = {
     totalFiles: 0,
     completedFiles: 0,
@@ -65,18 +65,7 @@ export class FileService {
         this.handlePeerData(peerId, data);
       });
 
-      // Initialize WebRTC service for faster transfers
-      this.webrtcService = new WebRTCService(this.p2pService, 'device-id');
-      
-      // Set up WebRTC event listeners
-      this.webrtcService.on('peer:data', (peerId: string, data: Buffer) => {
-        console.log(`📦 WebRTC data from ${peerId}: ${data.length} bytes`);
-        this.handleWebRTCData(peerId, data);
-      });
-      
-      this.webrtcService.on('peer:connected', (peerId: string) => {
-        console.log(`🚀 WebRTC fast lane established with ${peerId}`);
-      });
+      // WebRTC now handled in renderer process - will be connected via IPC
     }
     
     console.log('File service initialized with default destination:', this.destinationFolder);
@@ -91,27 +80,55 @@ export class FileService {
     return this.destinationFolder;
   }
 
-  private async waitForWebRTCConnection(targetDeviceId: string, timeoutMs: number = 10000): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const startTime = Date.now();
+  private receivedFiles: any[] = [];
+
+  async saveReceivedFileFromRenderer(fileData: ArrayBuffer, fileName: string, fileType: string): Promise<string> {
+    const fs = require('fs').promises;
+    const path = require('path');
+    
+    try {
+      // Ensure destination folder exists
+      await fs.mkdir(this.destinationFolder, { recursive: true });
       
-      const checkConnection = () => {
-        if (this.webrtcService?.isConnected(targetDeviceId)) {
-          resolve();
-          return;
-        }
-        
-        if (Date.now() - startTime > timeoutMs) {
-          reject(new Error('WebRTC connection timeout'));
-          return;
-        }
-        
-        setTimeout(checkConnection, 500); // Check every 500ms
+      // Create unique filename if file already exists
+      let finalFileName = fileName;
+      let counter = 1;
+      let filePath = path.join(this.destinationFolder, finalFileName);
+      
+      while (await fs.access(filePath).then(() => true).catch(() => false)) {
+        const ext = path.extname(fileName);
+        const baseName = path.basename(fileName, ext);
+        finalFileName = `${baseName} (${counter})${ext}`;
+        filePath = path.join(this.destinationFolder, finalFileName);
+        counter++;
+      }
+      
+      // Write file data
+      const buffer = Buffer.from(fileData);
+      await fs.writeFile(filePath, buffer);
+      
+      // Get file stats for the received files list
+      const stats = await fs.stat(filePath);
+      const fileInfo = {
+        name: finalFileName,
+        path: filePath,
+        size: stats.size,
+        modified: stats.mtime.toISOString()
       };
       
-      checkConnection();
-    });
+      // Add to received files list
+      this.receivedFiles.push(fileInfo);
+      
+      console.log(`File saved from renderer: ${finalFileName} (${stats.size} bytes)`);
+      return filePath;
+      
+    } catch (error) {
+      console.error('Failed to save file from renderer:', error);
+      throw error;
+    }
   }
+
+  // WebRTC connection is now handled in renderer process
 
   async getReceivedFiles(): Promise<any[]> {
     try {
@@ -160,22 +177,8 @@ export class FileService {
     const syncId = crypto.randomUUID();
     
     try {
-      // Try to establish WebRTC connection first (preferred method)
-      if (this.webrtcService && !this.webrtcService.isConnected(targetDeviceId)) {
-        console.log('🚀 Attempting WebRTC connection...');
-        try {
-          await this.webrtcService.createConnection(targetDeviceId);
-          
-          // Wait for WebRTC connection with shorter timeout
-          await this.waitForWebRTCConnection(targetDeviceId, 5000); // 5 second timeout
-          
-          if (this.webrtcService?.isConnected(targetDeviceId)) {
-            console.log('✅ WebRTC connection established!');
-          }
-        } catch (error: any) {
-          console.warn('⚠️ WebRTC connection failed, will use WebSocket fallback:', error.message);
-        }
-      }
+      // WebRTC is now handled in renderer process
+      console.log('File sync requested - WebRTC handled in renderer process');
 
       // Calculate total size and prepare transfers
       let totalSize = 0;
@@ -318,8 +321,8 @@ export class FileService {
     const retryDelay = 1000; // 1 second
 
     try {
-      // Try WebRTC first if available
-      const useWebRTC = this.webrtcService && this.webrtcService.isConnected(targetDeviceId);
+      // WebRTC is now handled in renderer process
+      const useWebRTC = false; // Main process no longer handles WebRTC
       
       if (useWebRTC) {
         console.log(`🚀 Using WebRTC for chunk ${chunk.index}`);
@@ -344,7 +347,8 @@ export class FileService {
         // Combine: [4 bytes header length][header][chunk data]
         const messageBuffer = Buffer.concat([headerLengthBuffer, headerBuffer, chunk.data]);
         
-        const success = this.webrtcService!.sendData(targetDeviceId, messageBuffer);
+        // WebRTC handled in renderer process now
+        const success = false;
         if (!success) {
           throw new Error('Failed to send via WebRTC');
         }

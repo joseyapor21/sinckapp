@@ -152,6 +152,58 @@ class SinckApp {
         return false;
       }
     });
+
+    // WebRTC file saving (renderer-side)
+    ipcMain.handle('save-received-file', async (event, fileData: ArrayBuffer, fileName: string, fileType: string) => {
+      return this.fileService.saveReceivedFileFromRenderer(fileData, fileName, fileType);
+    });
+
+    // WebRTC file reading (renderer-side)
+    ipcMain.handle('read-file-for-webrtc', async (event, filePath: string) => {
+      const fs = require('fs').promises;
+      const path = require('path');
+      
+      try {
+        const data = await fs.readFile(filePath);
+        const fileName = path.basename(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        
+        // Determine MIME type based on extension
+        let mimeType = 'application/octet-stream';
+        const mimeTypes: {[key: string]: string} = {
+          '.txt': 'text/plain',
+          '.pdf': 'application/pdf',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.gif': 'image/gif',
+          '.mp4': 'video/mp4',
+          '.mov': 'video/quicktime',
+          '.avi': 'video/x-msvideo',
+          '.mp3': 'audio/mpeg',
+          '.wav': 'audio/wav',
+          '.doc': 'application/msword',
+          '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          '.xls': 'application/vnd.ms-excel',
+          '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          '.zip': 'application/zip',
+          '.rar': 'application/x-rar-compressed'
+        };
+        
+        if (mimeTypes[ext]) {
+          mimeType = mimeTypes[ext];
+        }
+        
+        return {
+          name: fileName,
+          data: data.buffer,
+          type: mimeType
+        };
+      } catch (error) {
+        console.error('Failed to read file for WebRTC:', error);
+        throw error;
+      }
+    });
   }
 
   private async initializeServices(): Promise<void> {

@@ -13,6 +13,12 @@ declare global {
             getReceivedFiles: () => Promise<any[]>;
             openDestinationFolder: () => Promise<boolean>;
             openFile: (filePath: string) => Promise<boolean>;
+            saveReceivedFile: (fileData: ArrayBuffer, fileName: string, fileType: string) => Promise<string>;
+            readFileForWebRTC: (filePath: string) => Promise<{
+                name: string;
+                data: ArrayBuffer;
+                type: string;
+            }>;
             onSyncProgress: (callback: (progress: any) => void) => void;
             onDeviceConnected: (callback: (device: any) => void) => void;
             onDeviceDisconnected: (callback: (deviceId: string) => void) => void;

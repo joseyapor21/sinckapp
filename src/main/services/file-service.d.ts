@@ -32,12 +32,12 @@ export declare class FileService {
     private activeTransfers;
     private destinationFolder;
     private p2pService;
-    private webrtcService;
     private syncProgress;
     initialize(p2pService?: P2PService): Promise<void>;
     setDestinationFolder(folder: string): void;
     getDestinationFolder(): string;
-    private waitForWebRTCConnection;
+    private receivedFiles;
+    saveReceivedFileFromRenderer(fileData: ArrayBuffer, fileName: string, fileType: string): Promise<string>;
     getReceivedFiles(): Promise<any[]>;
     startSync(targetDeviceId: string, filePaths: string[]): Promise<string>;
     private prepareFileTransfer;

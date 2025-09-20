@@ -23,6 +23,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openDestinationFolder: () => ipcRenderer.invoke('open-destination-folder'),
   openFile: (filePath: string) => ipcRenderer.invoke('open-file', filePath),
   
+  // WebRTC file operations (renderer-side)
+  saveReceivedFile: (fileData: ArrayBuffer, fileName: string, fileType: string) => 
+    ipcRenderer.invoke('save-received-file', fileData, fileName, fileType),
+  readFileForWebRTC: (filePath: string) => 
+    ipcRenderer.invoke('read-file-for-webrtc', filePath),
+  
   // Event listeners
   onSyncProgress: (callback: (progress: any) => void) => {
     ipcRenderer.on('sync-progress', (event, progress) => callback(progress));
@@ -53,6 +59,8 @@ declare global {
       getReceivedFiles: () => Promise<any[]>;
       openDestinationFolder: () => Promise<boolean>;
       openFile: (filePath: string) => Promise<boolean>;
+      saveReceivedFile: (fileData: ArrayBuffer, fileName: string, fileType: string) => Promise<string>;
+      readFileForWebRTC: (filePath: string) => Promise<{name: string, data: ArrayBuffer, type: string}>;
       onSyncProgress: (callback: (progress: any) => void) => void;
       onDeviceConnected: (callback: (device: any) => void) => void;
       onDeviceDisconnected: (callback: (deviceId: string) => void) => void;

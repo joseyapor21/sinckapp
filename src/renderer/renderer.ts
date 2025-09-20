@@ -1,22 +1,73 @@
+import { WebRTCService, ConnectedPeer, FileTransferProgress } from './webrtc-service';
+
 class SinckAppRenderer {
   private selectedFiles: string[] = [];
   private selectedDevice: string | null = null;
   private connectedDevices: any[] = [];
   private destinationFolder: string = '';
   private receivedFiles: any[] = [];
+  private webrtcService: WebRTCService;
 
   constructor() {
+    this.webrtcService = new WebRTCService();
     this.initializeApp();
     this.setupEventListeners();
     this.setupElectronEventListeners();
+    this.setupWebRTCEventListeners();
   }
 
   private async initializeApp(): Promise<void> {
     await this.loadDeviceInfo();
+    await this.initializeWebRTC();
     await this.loadConnectedDevices();
     await this.loadDefaultDestination();
     await this.loadReceivedFiles();
     this.updateUI();
+  }
+
+  private async initializeWebRTC(): Promise<void> {
+    try {
+      const deviceInfo = await window.electronAPI.getDeviceInfo();
+      if (deviceInfo) {
+        await this.webrtcService.initialize(deviceInfo.id, deviceInfo.name);
+        console.log('WebRTC service initialized');
+      }
+    } catch (error) {
+      console.error('Failed to initialize WebRTC:', error);
+    }
+  }
+
+  private setupWebRTCEventListeners(): void {
+    this.webrtcService.onPeerConnected((peer: ConnectedPeer) => {
+      console.log('WebRTC peer connected:', peer);
+      this.addConnectedDevice(peer);
+    });
+
+    this.webrtcService.onPeerDisconnected((peerId: string) => {
+      console.log('WebRTC peer disconnected:', peerId);
+      this.removeConnectedDevice(peerId);
+    });
+
+    this.webrtcService.onFileReceived(async (file: File, sender: string) => {
+      console.log('File received via WebRTC:', file.name, 'from', sender);
+      try {
+        // Convert File to ArrayBuffer and save via IPC
+        const arrayBuffer = await file.arrayBuffer();
+        const filePath = await window.electronAPI.saveReceivedFile(arrayBuffer, file.name, file.type);
+        console.log('File saved to:', filePath);
+        
+        // Refresh received files list
+        await this.loadReceivedFiles();
+      } catch (error) {
+        console.error('Failed to save received file:', error);
+      }
+    });
+
+    this.webrtcService.onProgress((progress: FileTransferProgress) => {
+      console.log('File transfer progress:', progress);
+      // Update UI with progress
+      this.updateFileTransferProgress(progress);
+    });
   }
 
   private setupEventListeners(): void {
@@ -86,7 +137,21 @@ class SinckAppRenderer {
 
   private async loadConnectedDevices(): Promise<void> {
     try {
-      this.connectedDevices = await window.electronAPI.getConnectedDevices();
+      // Load devices from WebRTC service (P2P connections)
+      const webrtcDevices = this.webrtcService.getConnectedPeers();
+      
+      // Also load devices from main process (legacy P2P service)
+      const mainProcessDevices = await window.electronAPI.getConnectedDevices();
+      
+      // Combine both lists, preferring WebRTC connections
+      this.connectedDevices = [...webrtcDevices, ...mainProcessDevices];
+      
+      // Remove duplicates based on ID
+      const uniqueDevices = this.connectedDevices.filter((device, index, self) => 
+        index === self.findIndex(d => d.id === device.id)
+      );
+      
+      this.connectedDevices = uniqueDevices;
       this.renderDeviceList();
     } catch (error) {
       console.error('Failed to load connected devices:', error);
@@ -361,16 +426,97 @@ class SinckAppRenderer {
       syncBtn.disabled = true;
       statusText.textContent = 'Starting sync...';
 
-      const syncId = await window.electronAPI.startSync(this.selectedDevice, this.selectedFiles);
-      
-      statusText.textContent = 'Sync in progress...';
-      this.startProgressPolling();
+      // Use WebRTC for file transfer
+      await this.startWebRTCSync();
 
     } catch (error) {
       console.error('Failed to start sync:', error);
       const statusText = document.getElementById('sync-status-text')!;
       statusText.textContent = 'Sync failed';
+      
+      const syncBtn = document.getElementById('start-sync-btn') as HTMLButtonElement;
+      syncBtn.disabled = false;
     }
+  }
+
+  private async startWebRTCSync(): Promise<void> {
+    const statusText = document.getElementById('sync-status-text')!;
+    
+    // First, try to connect to the peer if not already connected
+    const isConnected = this.webrtcService.getConnectedPeers().some(peer => peer.id === this.selectedDevice);
+    
+    if (!isConnected) {
+      statusText.textContent = 'Connecting to peer...';
+      const connected = await this.webrtcService.connectToPeer(this.selectedDevice!);
+      
+      if (!connected) {
+        throw new Error('Failed to connect to peer');
+      }
+    }
+
+    statusText.textContent = 'Preparing files for transfer...';
+
+    // Convert file paths to File objects
+    for (const filePath of this.selectedFiles) {
+      try {
+        // Read file using FileReader API
+        const file = await this.readFileFromPath(filePath);
+        
+        statusText.textContent = `Sending ${file.name}...`;
+        
+        const success = await this.webrtcService.sendFile(this.selectedDevice!, file);
+        
+        if (!success) {
+          console.error(`Failed to send file: ${file.name}`);
+        } else {
+          console.log(`Successfully sent file: ${file.name}`);
+        }
+        
+      } catch (error) {
+        console.error(`Failed to process file ${filePath}:`, error);
+      }
+    }
+
+    statusText.textContent = 'All files sent!';
+    this.onSyncComplete();
+  }
+
+  private async readFileFromPath(filePath: string): Promise<File> {
+    try {
+      // Use IPC to read file from main process
+      const fileData = await window.electronAPI.readFileForWebRTC(filePath);
+      
+      // Create a File object from the data
+      const blob = new Blob([fileData.data], { type: fileData.type });
+      const file = new File([blob], fileData.name, { type: fileData.type });
+      
+      return file;
+    } catch (error) {
+      console.error('Failed to read file:', error);
+      throw error;
+    }
+  }
+
+  private updateFileTransferProgress(progress: FileTransferProgress): void {
+    // Update the UI with transfer progress
+    const progressContainer = document.getElementById('sync-progress')!;
+    const statusText = document.getElementById('sync-status-text')!;
+    
+    // Create a simple progress display
+    progressContainer.innerHTML = `
+      <div class="progress-item">
+        <div class="file-name">${progress.fileName}</div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: ${progress.progress}%"></div>
+        </div>
+        <div class="progress-info">
+          <span class="progress-percentage">${Math.round(progress.progress)}%</span>
+          <span class="transfer-size">${this.formatFileSize(progress.bytesTransferred)} / ${this.formatFileSize(progress.totalBytes)}</span>
+        </div>
+      </div>
+    `;
+    
+    statusText.textContent = `🚀 WebRTC | Sending ${progress.fileName}... ${Math.round(progress.progress)}%`;
   }
 
   private startProgressPolling(): void {
