@@ -169,7 +169,7 @@ export class FileService {
           // Wait for WebRTC connection with shorter timeout
           await this.waitForWebRTCConnection(targetDeviceId, 5000); // 5 second timeout
           
-          if (this.webrtcService.isConnected(targetDeviceId)) {
+          if (this.webrtcService?.isConnected(targetDeviceId)) {
             console.log('✅ WebRTC connection established!');
           }
         } catch (error: any) {

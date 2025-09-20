@@ -1,10 +1,9 @@
 import { EventEmitter } from 'events';
-import * as wrtc from '@roamhq/wrtc';
 export interface WebRTCPeer {
     id: string;
     name: string;
-    connection: wrtc.RTCPeerConnection;
-    dataChannel?: wrtc.RTCDataChannel;
+    connection: any;
+    dataChannel?: any;
     isConnected: boolean;
 }
 export declare class WebRTCService extends EventEmitter {
@@ -13,14 +12,10 @@ export declare class WebRTCService extends EventEmitter {
     private deviceId;
     constructor(signalingService: any, deviceId: string);
     private setupSignalingListeners;
-    createConnection(peerId: string): Promise<boolean>;
-    private setupPeerEventHandlers;
-    private handleOffer;
-    private handleAnswer;
-    private handleIceCandidate;
+    createConnection(peerId: string): Promise<void>;
+    private handleSignal;
     sendData(peerId: string, data: Buffer): boolean;
     isConnected(peerId: string): boolean;
-    getConnectedPeers(): string[];
     disconnect(peerId: string): void;
     destroy(): void;
 }
